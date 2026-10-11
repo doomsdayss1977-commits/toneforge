@@ -36,7 +36,7 @@ public:
     juce::String loadModel(const juce::File&);
     juce::String loadIR(const juce::File&);
     juce::File modelFile, irFile;
-    juce::String modelWarning;   // ex. fréquence d'échantillonnage différente
+    juce::String modelWarning;   // ex. capture rééchantillonnée
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float> inPeak { 0.f }, outPeak { 0.f };   // crêtes lues (et remises à 0) par les vumètres
@@ -48,6 +48,17 @@ private:
     juce::SpinLock modelLock;
     std::unique_ptr<nam::DSP> model;
     std::vector<float> namIn, namOut;
+    // Rééchantillonnage autour de NAM quand la capture n'est pas au taux du projet (protégé par modelLock).
+    struct Resampler
+    {
+        bool on = false;
+        double ratio = 1.0;   // taux de la capture / taux du projet
+        juce::Interpolators::Lagrange up, down;
+        std::vector<float> in, mid, out;   // file d'entrée (projet), bloc NAM, file de sortie (capture)
+        int inN = 0, outN = 0;
+    } rs;
+    void configureModel(nam::DSP&, Resampler&) const;
+    void processResampled(float* x, int n);
 
     juce::dsp::NoiseGate<float> gate;
     juce::dsp::Convolution cab { juce::dsp::Convolution::NonUniform { 256 } };

@@ -82,7 +82,7 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     {
         const juce::SpinLock::ScopedLockType sl(modelLock);
         if (model)
-            model->Reset(sr, maxBlock);
+            configureModel(*model, rs);
     }
     juce::dsp::ProcessSpec mono { sr, (juce::uint32) samplesPerBlock, 1 };
     gate.prepare(mono);
@@ -169,14 +169,19 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     {
         const juce::SpinLock::ScopedTryLockType sl(modelLock);
         if (sl.isLocked() && model)
-            chunks(namIn.size(), [&](int o, int c)
-            {
-                std::copy(x + o, x + o + c, namIn.data());
-                float* in = namIn.data();
-                float* out = namOut.data();
-                model->process(&in, &out, c);
-                std::copy(out, out + c, x + o);
-            });
+        {
+            if (rs.on)
+                chunks(namIn.size(), [&](int o, int c) { processResampled(x + o, c); });
+            else
+                chunks(namIn.size(), [&](int o, int c)
+                {
+                    std::copy(x + o, x + o + c, namIn.data());
+                    float* in = namIn.data();
+                    float* out = namOut.data();
+                    model->process(&in, &out, c);
+                    std::copy(out, out + c, x + o);
+                });
+        }
     }
 
     if (irLoaded && v("ir_on") > 0.5f)
@@ -216,18 +221,65 @@ juce::String ToneForgeProcessor::loadModel(const juce::File& f)
     }
     if (!m)
         return "Capture illisible.";
-    const double want = m->GetExpectedSampleRate();
-    modelWarning = (want > 0 && std::abs(want - sr) > 1 && !m->SupportsArbitrarySampleRate())
-        ? juce::String("Capture faite à ") + juce::String((int) want) + " Hz, projet à " + juce::String((int) sr)
-              + " Hz : mettez le projet à " + juce::String((int) want) + " Hz."
-        : juce::String();
-    m->Reset(sr, maxBlock);
+    Resampler r;
+    configureModel(*m, r);
+    modelWarning = r.on ? juce::String("Capture à ") + juce::String((int) (sr * r.ratio)) + " Hz, rééchantillonnée depuis "
+                              + juce::String((int) sr) + " Hz"
+                        : juce::String();
     {
         const juce::SpinLock::ScopedLockType sl(modelLock);
         std::swap(model, m);
+        std::swap(rs, r);
     }
     modelFile = f;
     return {};   // l'ancien modèle est détruit ici, hors du verrou
+}
+
+// Prépare la capture au taux du projet, ou au sien avec rééchantillonnage (Lagrange, ~2 échantillons
+// de latence par étage). Alloue : jamais depuis le thread audio en cours de lecture.
+void ToneForgeProcessor::configureModel(nam::DSP& m, Resampler& r) const
+{
+    const double want = m.GetExpectedSampleRate();
+    r.on = want > 0 && std::abs(want - sr) > 1 && !m.SupportsArbitrarySampleRate();
+    r.ratio = r.on ? want / sr : 1.0;
+    const int blk = (int) std::ceil(maxBlock * r.ratio) + 16;
+    m.Reset(r.on ? want : sr, r.on ? blk : maxBlock);
+    r.up.reset();
+    r.down.reset();
+    r.in.assign((size_t) maxBlock + 16, 0.f);
+    r.mid.assign((size_t) blk, 0.f);
+    r.out.assign((size_t) blk * 2 + 32, 0.f);
+    r.inN = 0;
+    r.outN = 12;   // amorce de silence : la sortie ne manque jamais d'échantillons
+}
+
+void ToneForgeProcessor::processResampled(float* x, int n)
+{
+    auto& r = rs;
+    std::copy(x, x + n, r.in.data() + r.inN);
+    r.inN += n;
+
+    // Montée au taux de la capture : on garde 3 échantillons d'avance pour l'interpolateur.
+    const int m = juce::jlimit(0, (int) r.mid.size(),
+                               juce::jmin((int) ((r.inN - 3) * r.ratio), (int) r.out.size() - r.outN));
+    const int used = r.up.process(1.0 / r.ratio, r.in.data(), r.mid.data(), m, r.inN, 0);
+    r.inN -= used;
+    std::move(r.in.begin() + used, r.in.begin() + used + r.inN, r.in.begin());
+
+    float* in = r.mid.data();
+    float* out = r.out.data() + r.outN;
+    model->process(&in, &out, m);
+    r.outN += m;
+
+    // Descente au taux du projet : exactement n échantillons.
+    if (r.outN < (int) std::ceil(n * r.ratio) + 3)
+    {
+        std::fill(x, x + n, 0.f);   // ne devrait pas arriver grâce à l'amorce
+        return;
+    }
+    const int back = r.down.process(r.ratio, r.out.data(), x, n, r.outN, 0);
+    r.outN -= back;
+    std::move(r.out.begin() + back, r.out.begin() + back + r.outN, r.out.begin());
 }
 
 juce::String ToneForgeProcessor::loadIR(const juce::File& f)
