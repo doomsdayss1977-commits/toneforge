@@ -21,8 +21,20 @@ juce_add_plugin(ToneForge
 target_sources(ToneForge
     PRIVATE
         Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp
-        ${NAM_SOURCES})
+        Source/PluginEditor.cpp)
+
+# NAM enregistre ses architectures par des initialiseurs statiques : liées dans la lib statique
+# SharedCode, l'éditeur de liens les jetterait ("No config parser registered"). On lie donc
+# les objets NAM directement dans chaque cible finale.
+add_library(nam_obj OBJECT ${NAM_SOURCES})
+target_include_directories(nam_obj PRIVATE ${NAM_DIR} ${NAM_DIR}/Dependencies/nlohmann SYSTEM PRIVATE ${NAM_DIR}/Dependencies/eigen)
+target_compile_definitions(nam_obj PRIVATE NAM_SAMPLE_FLOAT NAM_ENABLE_A2_FAST NOMINMAX WIN32_LEAN_AND_MEAN)
+if (MSVC)
+    target_compile_options(nam_obj PRIVATE /bigobj $<$<CONFIG:Release>:/O2>)
+endif()
+foreach(t ToneForge_VST3 ToneForge_Standalone)
+    target_sources(${t} PRIVATE $<TARGET_OBJECTS:nam_obj>)
+endforeach()
 
 target_include_directories(ToneForge
     PRIVATE
