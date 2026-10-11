@@ -50,6 +50,7 @@ target_compile_definitions(ToneForge
         NOMINMAX
         WIN32_LEAN_AND_MEAN
     PUBLIC
+        JUCE_ASIO=1
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
