@@ -17,6 +17,24 @@ ToneForgeProcessor::ToneForgeProcessor()
         for (size_t i = 0; i < d.params.size(); ++i)
             fxPar.back().push_back(apvts.getRawParameterValue(key + "_" + juce::String((int) i)));
     }
+    spare.resize(fx.size());
+    spareReady.reset(new std::atomic<bool>[fx.size()]);
+    for (size_t k = 0; k < fx.size(); ++k)
+        spareReady[k] = false;
+    lastOn.assign(fx.size(), 0);
+    timerCallback();
+    startTimer(250);
+}
+
+void ToneForgeProcessor::timerCallback()
+{
+    const auto& defs = fxDefs();
+    for (size_t k = 0; k < spare.size(); ++k)
+        if (!spareReady[k].load(std::memory_order_acquire))
+        {
+            spare[k].reset(defs[k].make(nullptr));   // détruit aussi l'ancienne instance usée
+            spareReady[k].store(true, std::memory_order_release);
+        }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
@@ -24,6 +42,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
     using P = juce::AudioParameterFloat;
     using R = juce::NormalisableRange<float>;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> p;
+    p.push_back(std::make_unique<juce::AudioParameterBool>("gate_on", "Gate", true));
     p.push_back(std::make_unique<P>("gate", "Gate (dB)", R(-100.f, -20.f), -70.f));
     p.push_back(std::make_unique<P>("input", "Entrée (dB)", R(-24.f, 24.f), 0.f));
     p.push_back(std::make_unique<juce::AudioParameterBool>("ir_on", "Baffle (IR)", true));
@@ -81,7 +100,17 @@ void ToneForgeProcessor::runFx(bool preAmp, float* l, float* r, int n)
     const auto& defs = fxDefs();
     for (size_t k = 0; k < defs.size(); ++k)
     {
-        if (defs[k].preAmp != preAmp || fxOn[k]->load() < 0.5f)
+        const bool on = fxOn[k]->load() >= 0.5f;
+        if (defs[k].preAmp != preAmp)
+            continue;
+        if (on && !lastOn[k] && spareReady[k].load(std::memory_order_acquire))
+        {
+            std::swap(fx[k], spare[k]);   // repart avec des tampons vides, sans allouer ici
+            fx[k]->setSampleRate((float) sr);
+            spareReady[k].store(false, std::memory_order_release);
+        }
+        lastOn[k] = on;
+        if (!on)
             continue;
         for (size_t i = 0; i < fxPar[k].size(); ++i)
             fx[k]->setParameter((VstInt32) i, fxPar[k][i]->load());
@@ -117,25 +146,37 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     juce::dsp::AudioBlock<float> monoBlock(&x, 1, (size_t) n);
     juce::dsp::ProcessContextReplacing<float> monoCtx(monoBlock);
 
-    gate.setThreshold(v("gate"));
-    gate.process(monoCtx);
-    if (n <= (int) scratch.size())
+    // Les tampons internes font maxBlock : un bloc plus long est traité par tranches.
+    auto chunks = [n](size_t cap, auto&& f)
     {
-        std::copy(x, x + n, scratch.data());
-        runFx(true, x, scratch.data(), n);   // compresseur avant l'ampli, en mono
+        const int c = (int) cap;
+        for (int o = 0; c > 0 && o < n; o += c)
+            f(o, juce::jmin(c, n - o));
+    };
+
+    if (v("gate_on") > 0.5f)
+    {
+        gate.setThreshold(v("gate"));
+        gate.process(monoCtx);
     }
+    chunks(scratch.size(), [&](int o, int c)
+    {
+        std::copy(x + o, x + o + c, scratch.data());
+        runFx(true, x + o, scratch.data(), c);   // compresseur avant l'ampli, en mono
+    });
     juce::FloatVectorOperations::multiply(x, juce::Decibels::decibelsToGain(v("input")), n);
 
     {
         const juce::SpinLock::ScopedTryLockType sl(modelLock);
-        if (sl.isLocked() && model && n <= (int) namIn.size())
-        {
-            std::copy(x, x + n, namIn.data());
-            float* in = namIn.data();
-            float* out = namOut.data();
-            model->process(&in, &out, n);
-            std::copy(out, out + n, x);
-        }
+        if (sl.isLocked() && model)
+            chunks(namIn.size(), [&](int o, int c)
+            {
+                std::copy(x + o, x + o + c, namIn.data());
+                float* in = namIn.data();
+                float* out = namOut.data();
+                model->process(&in, &out, c);
+                std::copy(out, out + c, x + o);
+            });
     }
 
     if (irLoaded && v("ir_on") > 0.5f)
@@ -147,13 +188,14 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         buffer.copyFrom(ch, 0, buffer, 0, 0, n);
 
     // Chorus, delay, reverb en stéréo (canal droit fictif si la sortie est mono)
-    float* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : scratch.data();
-    if (buffer.getNumChannels() > 1 || n <= (int) scratch.size())
-    {
-        if (buffer.getNumChannels() == 1)
-            std::copy(x, x + n, r);
-        runFx(false, x, r, n);
-    }
+    if (buffer.getNumChannels() > 1)
+        runFx(false, x, buffer.getWritePointer(1), n);
+    else
+        chunks(scratch.size(), [&](int o, int c)
+        {
+            std::copy(x + o, x + o + c, scratch.data());
+            runFx(false, x + o, scratch.data(), c);
+        });
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.copyFrom(ch, 0, buffer, ch % 2, 0, n);
 

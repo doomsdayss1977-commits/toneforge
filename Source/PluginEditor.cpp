@@ -3,7 +3,16 @@
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #endif
 
-static const juce::File kRoot("E:/Dev/ToneForge");
+// Bibliothèque = premier dossier parent du programme qui contient models/ ; sinon %APPDATA%\ToneForge.
+static juce::File findLibRoot()
+{
+    for (auto d = juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory();
+         !d.isRoot(); d = d.getParentDirectory())
+        if (d.getChildFile("models").isDirectory())
+            return d;
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("ToneForge");
+}
+static const juce::File kRoot = findLibRoot();
 static juce::String u8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
 
 //==============================================================================
@@ -96,7 +105,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     };
     const auto& fx = fxDefs();
     const juce::StringArray cats { "Dynamique", "Modulation", u8("Écho"), "Espace" };
-    defs.add({ "Gate", "Bruit", {}, "Coupe le souffle sous le seuil", { "gate" }, { "Seuil (dB)" } });
+    defs.add({ "Gate", "Bruit", "gate_on", "Coupe le souffle sous le seuil", { "gate" }, { "Seuil (dB)" } });
     defs.add(fxBlock(fx[0], cats[0]));
     defs.add({ "Ampli", "NAM", {}, {}, { "input", "output" }, { u8("Entrée (dB)"), "Sortie (dB)" } });
     defs.add({ "Baffle", "IR", "ir_on", {}, {}, {} });
@@ -144,6 +153,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     addChildComponent(bypass);
 
     scanLibrary();
+    proc.apvts.state.addListener(this);
     selectBlock(selected);
     refreshLabels();
     setSize(1180, 640);
@@ -152,6 +162,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
 
 ToneForgeEditor::~ToneForgeEditor()
 {
+    proc.apvts.state.removeListener(this);
     stopTimer();
     setLookAndFeel(nullptr);
 }
@@ -217,7 +228,13 @@ void ToneForgeEditor::listBoxItemClicked(int row, const juce::MouseEvent&)
 
 void ToneForgeEditor::load(const juce::File& f, bool isModel)
 {
+    if (f == (isModel ? proc.modelFile : proc.irFile))
+    {
+        selectBlock(isModel ? 2 : 3);   // déjà chargé : pas de rechargement
+        return;
+    }
     const auto err = isModel ? proc.loadModel(f) : proc.loadIR(f);
+    dirty = true;
     if (err.isNotEmpty())
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "ToneForge", err);
     selectBlock(isModel ? 2 : 3);
@@ -267,7 +284,11 @@ bool ToneForgeEditor::blockOn(int i) const
 void ToneForgeEditor::toggleBlock(int i)
 {
     if (auto* p = proc.apvts.getParameter(defs[i].onId))
+    {
+        p->beginChangeGesture();
         p->setValueNotifyingHost(blockOn(i) ? 0.f : 1.f);
+        p->endChangeGesture();
+    }
     for (auto& b : blocks)
         b->repaint();
 }
@@ -353,13 +374,13 @@ void ToneForgeEditor::timerCallback()
     fall(levelOut, proc.outPeak);
     repaint(meterIn.getUnion(meterOut).expanded(4, 16));
 
-    // Toutes les 2 s : LED à jour et réglages sauvegardés (l'appli autonome ne sauve sinon qu'à la fermeture).
+    // Toutes les 2 s : LED à jour et réglages sauvegardés s'ils ont changé (l'appli autonome ne sauve sinon qu'à la fermeture).
     if (++ticks % 60 == 0)
     {
         for (auto& b : blocks)
             b->repaint();
        #if JucePlugin_Build_Standalone
-        if (auto* h = juce::StandalonePluginHolder::getInstance())
+        if (auto* h = juce::StandalonePluginHolder::getInstance(); h && std::exchange(dirty, false))
             h->savePluginState();
        #endif
     }

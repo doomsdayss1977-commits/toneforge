@@ -5,7 +5,7 @@
 #include "Effects.h"
 
 // Chaîne : gate -> compresseur -> gain d'entrée -> NAM -> IR -> EQ 3 bandes -> chorus -> delay -> reverb -> volume
-class ToneForgeProcessor : public juce::AudioProcessor
+class ToneForgeProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
     ToneForgeProcessor();
@@ -21,7 +21,7 @@ public:
     const juce::String getName() const override { return "ToneForge"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
-    double getTailLengthSeconds() const override { return 2.0; }
+    double getTailLengthSeconds() const override { return 10.0; }   // queue du delay et de la reverb
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -51,14 +51,20 @@ private:
 
     juce::dsp::NoiseGate<float> gate;
     juce::dsp::Convolution cab { juce::dsp::Convolution::NonUniform { 256 } };
-    bool irLoaded = false;
+    std::atomic<bool> irLoaded { false };
     using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
     juce::dsp::ProcessorChain<Filter, Filter, Filter> eq;
     std::vector<std::unique_ptr<AudioEffect>> fx;   // un par entrée de fxDefs()
     std::vector<std::atomic<float>*> fxOn;               // paramètres en cache (pas d'allocation en audio)
     std::vector<std::vector<std::atomic<float>*>> fxPar;
+    // Instance neuve de rechange par effet : échangée à la réactivation (tampons vides),
+    // recréée hors du thread audio par timerCallback. spareReady dit qui y a droit.
+    std::vector<std::unique_ptr<AudioEffect>> spare;
+    std::unique_ptr<std::atomic<bool>[]> spareReady;
+    std::vector<char> lastOn;
     std::vector<float> scratch;                      // canal droit fictif pour les effets en mono
     void runFx(bool preAmp, float* l, float* r, int n);
+    void timerCallback() override;
     float lastEq[3] { 99.f, 99.f, 99.f };
     double sr = 48000.0;
     int maxBlock = 512;

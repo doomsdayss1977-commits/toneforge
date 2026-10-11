@@ -18,7 +18,8 @@ public:
     void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool hover, bool down) override;
 };
 
-class ToneForgeEditor : public juce::AudioProcessorEditor, private juce::ListBoxModel, private juce::Timer
+class ToneForgeEditor : public juce::AudioProcessorEditor, private juce::ListBoxModel, private juce::Timer,
+                        private juce::ValueTree::Listener
 {
 public:
     explicit ToneForgeEditor(ToneForgeProcessor&);
@@ -59,6 +60,7 @@ private:
     void listBoxItemClicked(int row, const juce::MouseEvent&) override;
 
     void timerCallback() override;
+    void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { dirty = true; }
     void scanLibrary();
     void filterList();
     void selectBlock(int i);
@@ -89,6 +91,7 @@ private:
     juce::Rectangle<int> topBar, chainArea, panelArea, meterIn, meterOut;
     float levelIn = 0.f, levelOut = 0.f;
     int ticks = 0;
+    bool dirty = false;   // réglages à sauvegarder
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToneForgeEditor)
 };
