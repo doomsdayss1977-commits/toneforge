@@ -1,6 +1,6 @@
 #include "PluginEditor.h"
 
-static const char* kIds[] = { "gate", "input", "bass", "mid", "treble", "dtime", "dfb", "dmix", "rsize", "rmix", "output" };
+static const char* kIds[] = { "gate", "input", "bass", "mid", "treble", "output" };
 
 ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&p), proc(p)
 {
@@ -13,18 +13,34 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     warnLbl.setColour(juce::Label::textColourId, juce::Colours::orange);
 
     for (auto* id : kIds)
+        knobs.push_back(makeKnob(id, proc.apvts.getParameter(id)->getName(40)));
+
+    for (auto& d : fxDefs())
     {
-        auto k = std::make_unique<Knob>();
-        k->label.setText(proc.apvts.getParameter(id)->getName(40), juce::dontSendNotification);
-        k->label.setJustificationType(juce::Justification::centred);
-        k->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 64, 18);
-        k->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, id, k->slider);
-        addAndMakeVisible(k->slider);
-        addAndMakeVisible(k->label);
-        knobs.push_back(std::move(k));
+        auto row = std::make_unique<FxRow>();
+        const juce::String key(d.key);
+        row->on.setButtonText(juce::String(juce::CharPointer_UTF8(d.title)));
+        row->att = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.apvts, key + "_on", row->on);
+        addAndMakeVisible(row->on);
+        for (size_t i = 0; i < d.params.size(); ++i)
+            row->knobs.push_back(makeKnob(key + "_" + juce::String((int) i),
+                                          juce::String(juce::CharPointer_UTF8(d.params[i].label))));
+        rows.push_back(std::move(row));
     }
     refreshLabels();
-    setSize(900, 340);
+    setSize(900, 280 + 120 * (int) rows.size());
+}
+
+std::unique_ptr<ToneForgeEditor::Knob> ToneForgeEditor::makeKnob(const juce::String& id, const juce::String& label)
+{
+    auto k = std::make_unique<Knob>();
+    k->label.setText(label, juce::dontSendNotification);
+    k->label.setJustificationType(juce::Justification::centred);
+    k->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 64, 18);
+    k->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, id, k->slider);
+    addAndMakeVisible(k->slider);
+    addAndMakeVisible(k->label);
+    return k;
 }
 
 void ToneForgeEditor::pick(bool isModel)
@@ -75,11 +91,22 @@ void ToneForgeEditor::resized()
     irLbl.setBounds(row);
     warnLbl.setBounds(r.removeFromTop(24));
     r.removeFromTop(12);
-    const int w = r.getWidth() / (int) knobs.size();
-    for (auto& k : knobs)
+    auto layoutKnobs = [](std::vector<std::unique_ptr<Knob>>& ks, juce::Rectangle<int> area, int h)
     {
-        auto c = r.removeFromLeft(w);
-        k->label.setBounds(c.removeFromTop(20));
-        k->slider.setBounds(c.removeFromTop(110));
+        const int w = area.getWidth() / 6;   // largeur fixe : les rangées restent alignées
+        for (auto& k : ks)
+        {
+            auto c = area.removeFromLeft(w);
+            k->label.setBounds(c.removeFromTop(18));
+            k->slider.setBounds(c.removeFromTop(h));
+        }
+    };
+    layoutKnobs(knobs, r.removeFromTop(130), 110);
+    for (auto& row : rows)
+    {
+        r.removeFromTop(8);
+        auto band = r.removeFromTop(112);
+        row->on.setBounds(band.removeFromLeft(170).withSizeKeepingCentre(170, 28));
+        layoutKnobs(row->knobs, band, 92);
     }
 }

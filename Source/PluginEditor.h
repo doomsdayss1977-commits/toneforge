@@ -23,7 +23,16 @@ private:
         juce::Label label;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
     };
-    std::vector<std::unique_ptr<Knob>> knobs;
+    std::unique_ptr<Knob> makeKnob(const juce::String& id, const juce::String& label);
+    std::vector<std::unique_ptr<Knob>> knobs;   // rangée ampli
+
+    struct FxRow
+    {
+        juce::ToggleButton on;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> att;
+        std::vector<std::unique_ptr<Knob>> knobs;
+    };
+    std::vector<std::unique_ptr<FxRow>> rows;   // une par effet Airwindows
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToneForgeEditor)
 };

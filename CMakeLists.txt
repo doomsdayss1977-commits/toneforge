@@ -23,6 +23,17 @@ target_sources(ToneForge
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp)
 
+# Effets Airwindows (MIT), compilés tels quels avec un shim du SDK VST2 (Source/aw).
+# Chaque .cpp définit createEffectInstance : renommé par effet pour éviter les doublons.
+set(AW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/airwindows/plugins/WinVST)
+foreach(fx Pressure5 ChorusEnsemble TapeDelay2 Galactic3)
+    set(src ${AW_DIR}/${fx}/${fx}.cpp ${AW_DIR}/${fx}/${fx}Proc.cpp)
+    target_sources(ToneForge PRIVATE ${src})
+    set_source_files_properties(${src} PROPERTIES
+        COMPILE_DEFINITIONS createEffectInstance=createEffectInstance_${fx}
+        COMPILE_OPTIONS "/wd4244;/wd4305;/wd4996")
+endforeach()
+
 # NAM enregistre ses architectures par des initialiseurs statiques : liées dans la lib statique
 # SharedCode, l'éditeur de liens les jetterait ("No config parser registered"). On lie donc
 # les objets NAM directement dans chaque cible finale.
@@ -40,6 +51,7 @@ target_include_directories(ToneForge
     PRIVATE
         ${NAM_DIR}
         ${NAM_DIR}/Dependencies/nlohmann
+        Source/aw
     SYSTEM PRIVATE
         ${NAM_DIR}/Dependencies/eigen)
 

@@ -8,6 +8,15 @@ ToneForgeProcessor::ToneForgeProcessor()
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "PARAMS", layout())
 {
+    for (auto& d : fxDefs())
+    {
+        fx.emplace_back(d.make(nullptr));
+        const juce::String key(d.key);
+        fxOn.push_back(apvts.getRawParameterValue(key + "_on"));
+        fxPar.emplace_back();
+        for (size_t i = 0; i < d.params.size(); ++i)
+            fxPar.back().push_back(apvts.getRawParameterValue(key + "_" + juce::String((int) i)));
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
@@ -20,12 +29,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
     p.push_back(std::make_unique<P>("bass", "Graves (dB)", R(-12.f, 12.f), 0.f));
     p.push_back(std::make_unique<P>("mid", "Médiums (dB)", R(-12.f, 12.f), 0.f));
     p.push_back(std::make_unique<P>("treble", "Aigus (dB)", R(-12.f, 12.f), 0.f));
-    p.push_back(std::make_unique<P>("dtime", "Delay (ms)", R(20.f, 1500.f, 0.f, 0.5f), 380.f));
-    p.push_back(std::make_unique<P>("dfb", "Répétitions", R(0.f, 0.9f), 0.3f));
-    p.push_back(std::make_unique<P>("dmix", "Delay mix", R(0.f, 1.f), 0.f));
-    p.push_back(std::make_unique<P>("rsize", "Reverb taille", R(0.f, 1.f), 0.5f));
-    p.push_back(std::make_unique<P>("rmix", "Reverb mix", R(0.f, 1.f), 0.f));
     p.push_back(std::make_unique<P>("output", "Sortie (dB)", R(-24.f, 12.f), 0.f));
+    for (auto& d : fxDefs())
+    {
+        const juce::String key(d.key), title(juce::CharPointer_UTF8(d.title));
+        p.push_back(std::make_unique<juce::AudioParameterBool>(key + "_on", title, false));
+        const auto shortName = title.upToFirstOccurrenceOf(" (", false, false);
+        for (size_t i = 0; i < d.params.size(); ++i)
+            p.push_back(std::make_unique<P>(key + "_" + juce::String((int) i),
+                                            shortName + " " + juce::String(juce::CharPointer_UTF8(d.params[i].label)),
+                                            R(0.f, 1.f), d.params[i].def));
+    }
     return { p.begin(), p.end() };
 }
 
@@ -42,13 +56,15 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     maxBlock = samplesPerBlock;
     namIn.assign((size_t) samplesPerBlock, 0.f);
     namOut.assign((size_t) samplesPerBlock, 0.f);
+    scratch.assign((size_t) samplesPerBlock, 0.f);
+    for (auto& e : fx)
+        e->setSampleRate((float) sampleRate);
     {
         const juce::SpinLock::ScopedLockType sl(modelLock);
         if (model)
             model->Reset(sr, maxBlock);
     }
     juce::dsp::ProcessSpec mono { sr, (juce::uint32) samplesPerBlock, 1 };
-    juce::dsp::ProcessSpec stereo { sr, (juce::uint32) samplesPerBlock, 2 };
     gate.prepare(mono);
     gate.setRatio(10.f);
     gate.setAttack(1.f);
@@ -57,8 +73,20 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     eq.prepare(mono);
     lastEq[0] = 99.f;
     updateEq();
-    delay.prepare(stereo);
-    reverb.prepare(stereo);
+}
+
+void ToneForgeProcessor::runFx(bool preAmp, float* l, float* r, int n)
+{
+    const auto& defs = fxDefs();
+    for (size_t k = 0; k < defs.size(); ++k)
+    {
+        if (defs[k].preAmp != preAmp || fxOn[k]->load() < 0.5f)
+            continue;
+        for (size_t i = 0; i < fxPar[k].size(); ++i)
+            fx[k]->setParameter((VstInt32) i, fxPar[k][i]->load());
+        float* io[2] { l, r };
+        fx[k]->processReplacing(io, io, n);
+    }
 }
 
 void ToneForgeProcessor::updateEq()
@@ -88,6 +116,11 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 
     gate.setThreshold(v("gate"));
     gate.process(monoCtx);
+    if (n <= (int) scratch.size())
+    {
+        std::copy(x, x + n, scratch.data());
+        runFx(true, x, scratch.data(), n);   // compresseur avant l'ampli, en mono
+    }
     juce::FloatVectorOperations::multiply(x, juce::Decibels::decibelsToGain(v("input")), n);
 
     {
@@ -110,36 +143,16 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     for (int ch = 1; ch < buffer.getNumChannels(); ++ch)
         buffer.copyFrom(ch, 0, buffer, 0, 0, n);
 
-    // Delay (stéréo)
-    const float dmix = v("dmix"), dfb = v("dfb");
-    if (dmix > 0.f)
+    // Chorus, delay, reverb en stéréo (canal droit fictif si la sortie est mono)
+    float* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : scratch.data();
+    if (buffer.getNumChannels() > 1 || n <= (int) scratch.size())
     {
-        delay.setDelay((float) (v("dtime") * 0.001 * sr));
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-        {
-            float* d = buffer.getWritePointer(ch);
-            for (int i = 0; i < n; ++i)
-            {
-                const float wet = delay.popSample(ch);
-                delay.pushSample(ch, d[i] + wet * dfb);
-                d[i] += wet * dmix;
-            }
-        }
+        if (buffer.getNumChannels() == 1)
+            std::copy(x, x + n, r);
+        runFx(false, x, r, n);
     }
-
-    // Reverb
-    const float rmix = v("rmix");
-    if (rmix > 0.f)
-    {
-        juce::dsp::Reverb::Parameters rp;
-        rp.roomSize = v("rsize");
-        rp.wetLevel = rmix;
-        rp.dryLevel = 1.f;
-        rp.width = 1.f;
-        reverb.setParameters(rp);
-        juce::dsp::AudioBlock<float> block(buffer);
-        reverb.process(juce::dsp::ProcessContextReplacing<float>(block));
-    }
+    for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
+        buffer.copyFrom(ch, 0, buffer, ch % 2, 0, n);
 
     buffer.applyGain(juce::Decibels::decibelsToGain(v("output")));
 }

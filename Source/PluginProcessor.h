@@ -2,8 +2,9 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
 #include "NAM/dsp.h"
+#include "Effects.h"
 
-// Chaîne : gate -> gain d'entrée -> NAM -> IR -> EQ 3 bandes -> delay -> reverb -> volume
+// Chaîne : gate -> compresseur -> gain d'entrée -> NAM -> IR -> EQ 3 bandes -> chorus -> delay -> reverb -> volume
 class ToneForgeProcessor : public juce::AudioProcessor
 {
 public:
@@ -52,8 +53,11 @@ private:
     bool irLoaded = false;
     using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
     juce::dsp::ProcessorChain<Filter, Filter, Filter> eq;
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> delay { 192000 };
-    juce::dsp::Reverb reverb;
+    std::vector<std::unique_ptr<AudioEffect>> fx;   // un par entrée de fxDefs()
+    std::vector<std::atomic<float>*> fxOn;               // paramètres en cache (pas d'allocation en audio)
+    std::vector<std::vector<std::atomic<float>*>> fxPar;
+    std::vector<float> scratch;                      // canal droit fictif pour les effets en mono
+    void runFx(bool preAmp, float* l, float* r, int n);
     float lastEq[3] { 99.f, 99.f, 99.f };
     double sr = 48000.0;
     int maxBlock = 512;
