@@ -15,6 +15,8 @@ private:
     ToneForgeProcessor& proc;
     juce::TextButton modelBtn { "Capture NAM..." }, irBtn { "IR baffle..." };
     juce::Label modelLbl, irLbl, warnLbl;
+    juce::ToggleButton irOn { "Actif" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> irOnAtt;
     std::unique_ptr<juce::FileChooser> chooser;
 
     struct Knob

@@ -10,6 +10,8 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     irBtn.onClick = [this] { pick(false); };
     for (auto* l : { &modelLbl, &irLbl, &warnLbl })
         addAndMakeVisible(l);
+    addAndMakeVisible(irOn);
+    irOnAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.apvts, "ir_on", irOn);
     warnLbl.setColour(juce::Label::textColourId, juce::Colours::orange);
 
     for (auto* id : kIds)
@@ -88,6 +90,7 @@ void ToneForgeEditor::resized()
     modelLbl.setBounds(row.removeFromLeft(280));
     irBtn.setBounds(row.removeFromLeft(120));
     row.removeFromLeft(8);
+    irOn.setBounds(row.removeFromLeft(70));
     irLbl.setBounds(row);
     warnLbl.setBounds(r.removeFromTop(24));
     r.removeFromTop(12);

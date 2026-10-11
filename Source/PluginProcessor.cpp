@@ -26,6 +26,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> p;
     p.push_back(std::make_unique<P>("gate", "Gate (dB)", R(-100.f, -20.f), -70.f));
     p.push_back(std::make_unique<P>("input", "Entrée (dB)", R(-24.f, 24.f), 0.f));
+    p.push_back(std::make_unique<juce::AudioParameterBool>("ir_on", "Baffle (IR)", true));
     p.push_back(std::make_unique<P>("bass", "Graves (dB)", R(-12.f, 12.f), 0.f));
     p.push_back(std::make_unique<P>("mid", "Médiums (dB)", R(-12.f, 12.f), 0.f));
     p.push_back(std::make_unique<P>("treble", "Aigus (dB)", R(-12.f, 12.f), 0.f));
@@ -135,7 +136,7 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         }
     }
 
-    if (irLoaded)
+    if (irLoaded && v("ir_on") > 0.5f)
         cab.process(monoCtx);
     updateEq();
     eq.process(monoCtx);
