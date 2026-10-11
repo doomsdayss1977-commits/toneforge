@@ -109,6 +109,8 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
     auto v = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
+    auto peak = [](std::atomic<float>& a, float m) { if (m > a.load()) a.store(m); };
+    peak(inPeak, buffer.getMagnitude(0, 0, n));
 
     // Guitare = mono : on traite le canal 0, puis on recopie vers les autres.
     float* x = buffer.getWritePointer(0);
@@ -156,6 +158,7 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         buffer.copyFrom(ch, 0, buffer, ch % 2, 0, n);
 
     buffer.applyGain(juce::Decibels::decibelsToGain(v("output")));
+    peak(outPeak, buffer.getMagnitude(0, 0, n));
 }
 
 juce::String ToneForgeProcessor::loadModel(const juce::File& f)

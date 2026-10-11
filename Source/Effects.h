@@ -24,12 +24,12 @@ struct FxDef
 inline const std::vector<FxDef>& fxDefs()
 {
     static const std::vector<FxDef> d {
-        { "comp", "Compresseur (Pressure5)", true, createEffectInstance_Pressure5,
+        { "comp", "Comp (Pressure5)", true, createEffectInstance_Pressure5,
           { { "Pression", 0.3f }, { "Vitesse", 0.25f }, { "Douceur", 1.f }, { "Griffe", 0.5f },
             { "Sortie", 0.5f }, { "Mix", 1.f } } },
         { "chorus", "Chorus (ChorusEnsemble)", false, createEffectInstance_ChorusEnsemble,
           { { "Vitesse", 0.5f }, { "Profondeur", 0.5f }, { "Mix", 0.5f } } },
-        { "delay", "Delay à bande (TapeDelay2)", false, createEffectInstance_TapeDelay2,
+        { "delay", "Delay (TapeDelay2)", false, createEffectInstance_TapeDelay2,
           { { "Temps", 0.5f }, { "Répétitions", 0.3f }, { "Fréquence", 0.5f }, { "Résonance", 0.f },
             { "Flutter", 0.1f }, { "Mix", 0.3f } } },
         { "reverb", "Reverb (Galactic3)", false, createEffectInstance_Galactic3,

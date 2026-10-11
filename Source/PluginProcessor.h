@@ -39,6 +39,7 @@ public:
     juce::String modelWarning;   // ex. fréquence d'échantillonnage différente
 
     juce::AudioProcessorValueTreeState apvts;
+    std::atomic<float> inPeak { 0.f }, outPeak { 0.f };   // crêtes lues (et remises à 0) par les vumètres
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
