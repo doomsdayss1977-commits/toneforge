@@ -260,7 +260,7 @@ void ToneForgeEditor::refreshLabels()
 {
     auto name = [](const juce::File& f) { return f == juce::File() ? juce::String("(aucun)") : f.getFileNameWithoutExtension(); };
     nameLbl.setText(name(proc.modelFile), juce::dontSendNotification);
-    warnLbl.setText(proc.modelWarning, juce::dontSendNotification);
+    warnLbl.setText(proc.modelWarning(), juce::dontSendNotification);
     if (selected == 2)
         panelInfo.setText(proc.modelFile.getFullPathName(), juce::dontSendNotification);
     else if (selected == 3)
@@ -379,6 +379,7 @@ void ToneForgeEditor::timerCallback()
     {
         for (auto& b : blocks)
             b->repaint();
+        warnLbl.setText(proc.modelWarning(), juce::dontSendNotification);   // le taux du projet a pu changer
        #if JucePlugin_Build_Standalone
         if (auto* h = juce::StandalonePluginHolder::getInstance(); h && std::exchange(dirty, false))
             h->savePluginState();

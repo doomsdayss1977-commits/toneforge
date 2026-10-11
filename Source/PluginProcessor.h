@@ -36,7 +36,12 @@ public:
     juce::String loadModel(const juce::File&);
     juce::String loadIR(const juce::File&);
     juce::File modelFile, irFile;
-    juce::String modelWarning;   // ex. capture rééchantillonnée
+    juce::String modelWarning() const   // ex. capture rééchantillonnée ; suit les changements de taux du projet
+    {
+        const int c = captureRate, p = projectRate;
+        return c > 0 ? "Capture à " + juce::String(c) + " Hz, rééchantillonnée depuis " + juce::String(p) + " Hz"
+                     : juce::String();
+    }
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float> inPeak { 0.f }, outPeak { 0.f };   // crêtes lues (et remises à 0) par les vumètres
@@ -57,7 +62,8 @@ private:
         std::vector<float> in, mid, out;   // file d'entrée (projet), bloc NAM, file de sortie (capture)
         int inN = 0, outN = 0;
     } rs;
-    void configureModel(nam::DSP&, Resampler&) const;
+    std::atomic<int> captureRate { 0 }, projectRate { 0 };   // capture rééchantillonnée (0 = non), lus par l'interface
+    void configureModel(nam::DSP&, Resampler&);
     void processResampled(float* x, int n);
 
     juce::dsp::NoiseGate<float> gate;

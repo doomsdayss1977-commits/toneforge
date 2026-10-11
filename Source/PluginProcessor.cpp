@@ -221,15 +221,12 @@ juce::String ToneForgeProcessor::loadModel(const juce::File& f)
     }
     if (!m)
         return "Capture illisible.";
-    Resampler r;
-    configureModel(*m, r);
-    modelWarning = r.on ? juce::String("Capture à ") + juce::String((int) (sr * r.ratio)) + " Hz, rééchantillonnée depuis "
-                              + juce::String((int) sr) + " Hz"
-                        : juce::String();
     {
+        // Configuré sous le verrou : un prepareToPlay concurrent ne peut pas laisser des tampons à l'ancienne taille.
+        // Le thread audio ne fait qu'un try-lock : il saute NAM le temps du chargement, sans bloquer.
         const juce::SpinLock::ScopedLockType sl(modelLock);
+        configureModel(*m, rs);
         std::swap(model, m);
-        std::swap(rs, r);
     }
     modelFile = f;
     return {};   // l'ancien modèle est détruit ici, hors du verrou
@@ -237,10 +234,12 @@ juce::String ToneForgeProcessor::loadModel(const juce::File& f)
 
 // Prépare la capture au taux du projet, ou au sien avec rééchantillonnage (Lagrange, ~2 échantillons
 // de latence par étage). Alloue : jamais depuis le thread audio en cours de lecture.
-void ToneForgeProcessor::configureModel(nam::DSP& m, Resampler& r) const
+void ToneForgeProcessor::configureModel(nam::DSP& m, Resampler& r)
 {
     const double want = m.GetExpectedSampleRate();
     r.on = want > 0 && std::abs(want - sr) > 1 && !m.SupportsArbitrarySampleRate();
+    captureRate = r.on ? juce::roundToInt(want) : 0;
+    projectRate = juce::roundToInt(sr);
     r.ratio = r.on ? want / sr : 1.0;
     const int blk = (int) std::ceil(maxBlock * r.ratio) + 16;
     m.Reset(r.on ? want : sr, r.on ? blk : maxBlock);
