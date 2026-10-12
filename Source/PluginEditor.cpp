@@ -1216,7 +1216,10 @@ void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err
                 p->beginChangeGesture();
                 p->setValueNotifyingHost(r.convertTo0to1(v));
                 p->endChangeGesture();
+                recap << p->getName(40) << " = " << p->getCurrentValueAsText() << "\n";
             }
+            else
+                recap << u8("Ignoré (inconnu) : ") << kv.name.toString() << "\n";
     dirty = true;
     for (auto& b : blocks)
         b->repaint();
