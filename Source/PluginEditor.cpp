@@ -145,7 +145,8 @@ juce::String brandOf(const juce::String& s, bool pedal = false)
         { "Tech21", "Tech 21" }, { "B7K", "Darkglass" }, { "Behringer", "Behringer" }, { "TS9", "Ibanez" },
         { "TS808", "Ibanez" }, { "Tube Screamer", "Ibanez" }, { "Klon", "Klon" }, { "Centaur", "Klon" },
         { "EHX", "Electro-Harmonix" }, { "Electro-Harmonix", "Electro-Harmonix" }, { "Big Muff", "Electro-Harmonix" },
-        { "ProCo", "ProCo" }, { "Pro Co", "ProCo" }, { "RAT", "ProCo" }, { "Wampler", "Wampler" } };
+        { "ProCo", "ProCo" }, { "Pro Co", "ProCo" }, { "RAT", "ProCo" }, { "Wampler", "Wampler" },
+        { "Death By Audio", "Death By Audio" }, { "Fuzz War", "Death By Audio" } };
     static const std::pair<const char*, const char*> rules[] = {
         { "Gallien", "Gallien-Krueger" }, { "GK", "Gallien-Krueger" }, { "Ampeg", "Ampeg" }, { "SVT", "Ampeg" },
         { "Portaflex", "Ampeg" }, { "B15", "Ampeg" }, { "B-15", "Ampeg" }, { "B18", "Ampeg" }, { "Marshall", "Marshall" },
