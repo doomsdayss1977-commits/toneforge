@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "AiTone.h"
 #if JucePlugin_Build_Standalone
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #endif
@@ -417,6 +418,34 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
         addAndMakeVisible(l);
     bypass.setButtonText("Actif");
     addChildComponent(bypass);
+
+    // Son IA
+    aiBtn.setButtonText(u8("✦ Son IA"));
+    aiBtn.setClickingTogglesState(false);
+    aiBtn.onClick = [this]
+    {
+        aiOpen = !aiOpen;
+        aiBtn.setToggleState(aiOpen, juce::dontSendNotification);
+        resized();
+        if (aiOpen)
+            aiPrompt.grabKeyboardFocus();
+    };
+    addAndMakeVisible(aiBtn);
+    aiGo.setButtonText(u8("Générer le son"));
+    aiGo.onClick = [this] { askAi(); };
+    aiClose.onClick = [this] { aiBtn.onClick(); };
+    aiPrompt.setMultiLine(true, true);
+    aiPrompt.setReturnKeyStartsNewLine(false);
+    aiPrompt.onReturnKey = [this] { askAi(); };
+    aiPrompt.setFont(juce::FontOptions(16.f));
+    aiPrompt.setTextToShowWhenEmpty(u8("Décris le son voulu : « Metallica Black Album », « basse ronde style Motown », "
+                                       "« clean brillant avec un peu d'écho »..."), tf::dim);
+    aiOut.setMultiLine(true, true);
+    aiOut.setReadOnly(true);
+    aiOut.setCaretVisible(false);
+    aiOut.setFont(juce::FontOptions(14.f));
+    for (auto* c : { (juce::Component*) &aiPrompt, (juce::Component*) &aiGo, (juce::Component*) &aiClose, (juce::Component*) &aiOut })
+        addChildComponent(c);
 
     scanLibrary();
     proc.apvts.state.addListener(this);
@@ -982,6 +1011,8 @@ void ToneForgeEditor::resized()
         auto l = lcdArea.reduced(12, 3);
         nameLbl.setBounds(l.removeFromTop(25));
         warnLbl.setBounds(l);
+        aiBtn.setBounds(juce::Rectangle<int>(meterIn.getX() - lcdArea.getRight() - 48, 34)
+                            .withCentre({ (lcdArea.getRight() + meterIn.getX()) / 2, topBar.getCentreY() }));
     }
 
     auto side = r.removeFromLeft(260).reduced(12);
@@ -1052,5 +1083,142 @@ void ToneForgeEditor::resized()
     }
     panelInfo.setBounds(grilleArea.reduced(20, 10).removeFromBottom(24));
 
+    // Panneau IA par-dessus la façade
+    for (auto& k : knobs)
+    {
+        k->slider.setVisible(!aiOpen);
+        k->label.setVisible(!aiOpen);
+    }
+    panelTitle.setVisible(!aiOpen);
+    panelInfo.setVisible(!aiOpen);
+    bypass.setVisible(!aiOpen && defs[selected].onId.isNotEmpty());
+    for (auto* c : { (juce::Component*) &aiPrompt, (juce::Component*) &aiGo, (juce::Component*) &aiClose, (juce::Component*) &aiOut })
+    {
+        c->setVisible(aiOpen);
+        c->toFront(false);
+    }
+    {
+        auto a = plateArea.reduced(26, 22);
+        auto btns = a.removeFromBottom(36);
+        aiClose.setBounds(btns.removeFromRight(100));
+        btns.removeFromRight(10);
+        aiGo.setBounds(btns.removeFromRight(180));
+        a.removeFromBottom(10);
+        aiPrompt.setBounds(a);
+        aiOut.setBounds(grilleArea.reduced(16));
+    }
+
     renderBackground();
+}
+
+//==============================================================================
+// Son IA : on décrit la chaîne, ses réglages et toute la bibliothèque ; l'IA répond en JSON.
+void ToneForgeEditor::askAi()
+{
+    const auto demande = aiPrompt.getText().trim();
+    if (aiBusy || demande.isEmpty())
+        return;
+    const auto cfg = ai::config();
+    if (cfg.key.isEmpty())
+    {
+        aiOut.setText(u8("Aucune clé OpenRouter : ni variable OPENROUTER_API_KEY, ni C:\\dev\\dnd_dm\\data\\settings.json."));
+        return;
+    }
+
+    juce::String chaine;
+    for (const auto& d : defs)
+    {
+        chaine << "- " << d.title << " (" << d.kind << ")";
+        if (d.info.isNotEmpty())
+            chaine << " : " << d.info;
+        chaine << "\n";
+        if (d.onId.isNotEmpty())
+            chaine << "    " << d.onId << " = 1 actif / 0 coupe (actuel "
+                   << juce::String(proc.apvts.getRawParameterValue(d.onId)->load(), 0) << ")\n";
+        for (int k = 0; k < d.ids.size(); ++k)
+        {
+            const auto r = proc.apvts.getParameterRange(d.ids[k]);
+            chaine << "    " << d.ids[k] << " = " << d.labels[k] << ", de " << r.start << " a " << r.end
+                   << " (actuel " << juce::String(proc.apvts.getRawParameterValue(d.ids[k])->load(), 2) << ")\n";
+        }
+    }
+    juce::String biblio = "Captures d'ampli NAM :\n";
+    for (int i = 0; i < models.size(); ++i)
+        biblio << "M" << i << " : " << models[i].brand << " | " << models[i].group << " | " << models[i].name << "\n";
+    biblio << "\nIR de baffle :\n";
+    for (int i = 0; i < irs.size(); ++i)
+        biblio << "I" << i << " : " << irs[i].brand << " | " << irs[i].group << " | " << irs[i].name << "\n";
+
+    const auto system = u8(
+        "Tu es un ingénieur du son expert en amplis guitare et basse. Le musicien décrit un son (groupe, album, style "
+        "ou exigence). Tu configures le simulateur ToneForge avec UNIQUEMENT les captures, IR et paramètres listés. "
+        "Chaîne du signal, dans l'ordre :\n") + chaine
+        + "\n" + biblio
+        + u8("\nRéponds UNIQUEMENT par un objet JSON, sans texte autour :\n"
+             "{\"capture\": \"M12\", \"ir\": \"I3\", \"reglages\": {\"id_parametre\": valeur}, \"explication\": \"...\"}\n"
+             "- capture / ir : un identifiant de la liste, ou null pour garder l'actuel.\n"
+             "- reglages : seulement les paramètres à changer, valeurs dans les bornes ; active ou coupe les blocs avec les *_on.\n"
+             "- explication : en français, 3 à 6 phrases : pourquoi ces choix, et ce qui manque si la bibliothèque n'a "
+             "pas la capture idéale (quel ampli chercher sur TONE3000).");
+
+    aiBusy = true;
+    aiGo.setEnabled(false);
+    aiOut.setText(u8("Génération du son avec ") + cfg.model + "...");
+    juce::Thread::launch([sp = juce::Component::SafePointer<ToneForgeEditor>(this), cfg, system, demande]
+    {
+        juce::String err;
+        const auto reply = ai::chat(cfg, system, demande, err);
+        juce::MessageManager::callAsync([sp, reply, err]
+        {
+            if (sp != nullptr)
+                sp->applyAi(reply, err);
+        });
+    });
+}
+
+void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err)
+{
+    aiBusy = false;
+    aiGo.setEnabled(true);
+    if (err.isNotEmpty())
+    {
+        aiOut.setText(err);
+        return;
+    }
+    // Le JSON peut être entouré de texte ou d'un bloc de code
+    const auto j = juce::JSON::parse(reply.fromFirstOccurrenceOf("{", true, false).upToLastOccurrenceOf("}", true, false));
+    if (!j.isObject())
+    {
+        aiOut.setText(u8("Réponse illisible de l'IA :\n") + reply);
+        return;
+    }
+    juce::String recap;
+    auto pickFrom = [&](const juce::var& id, const juce::Array<Entry>& lib, bool isModel)
+    {
+        const auto s = id.toString().trim();
+        const int i = s.getTrailingIntValue();
+        if (s.isNotEmpty() && s != "null" && juce::isPositiveAndBelow(i, lib.size()))
+        {
+            const auto e = lib[i];   // copie : load() peut toucher aux listes
+            load(e.file, isModel);
+            recap << (isModel ? "Capture : " : "IR : ") << e.name << "\n";
+        }
+    };
+    pickFrom(j["ir"], irs, false);
+    pickFrom(j["capture"], models, true);   // en dernier : on revient sur le bloc Ampli
+
+    if (auto* o = j["reglages"].getDynamicObject())
+        for (const auto& kv : o->getProperties())
+            if (auto* p = proc.apvts.getParameter(kv.name.toString()))
+            {
+                const auto r = proc.apvts.getParameterRange(kv.name.toString());
+                const auto v = juce::jlimit(r.start, r.end, (float) (double) kv.value);
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(r.convertTo0to1(v));
+                p->endChangeGesture();
+            }
+    dirty = true;
+    for (auto& b : blocks)
+        b->repaint();
+    aiOut.setText(j["explication"].toString() + "\n\n" + recap);
 }

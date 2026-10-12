@@ -73,6 +73,8 @@ private:
     void pick();
     void refreshLabels();
     void renderBackground();
+    void askAi();
+    void applyAi(const juce::String& reply, const juce::String& err);
 
     ToneForgeProcessor& proc;
     TfLook look;
@@ -93,6 +95,11 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt;
     std::vector<std::unique_ptr<Knob>> knobs;
     std::unique_ptr<juce::FileChooser> chooser;
+
+    // Mode « Son IA » : demande en texte libre -> capture, IR et réglages choisis par OpenRouter
+    juce::TextButton aiBtn, aiGo, aiClose { "Fermer" };
+    juce::TextEditor aiPrompt, aiOut;
+    bool aiOpen = false, aiBusy = false;
 
     juce::Rectangle<int> topBar, chainArea, panelArea, plateArea, grilleArea, lcdArea, meterIn, meterOut;
     juce::Image grain, bgCache;   // texture tolex ; décor statique pré-rendu (refait au changement de bloc)
