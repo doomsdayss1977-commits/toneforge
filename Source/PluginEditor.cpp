@@ -1281,7 +1281,17 @@ void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err
                 p->beginChangeGesture();
                 p->setValueNotifyingHost(r.convertTo0to1(v));
                 p->endChangeGesture();
-                recap << p->getName(40) << " = " << p->getCurrentValueAsText() << "\n";
+                // Lisible : interrupteurs en clair, nombres à 2 décimales au plus (-45, 0.55, 3.5)
+                juce::String txt;
+                if (dynamic_cast<juce::AudioParameterBool*>(p) != nullptr)
+                    txt = v > 0.5f ? juce::String("en marche") : u8("coupé");
+                else
+                {
+                    txt = juce::String(v, 2);
+                    if (txt.containsChar('.'))
+                        txt = txt.trimCharactersAtEnd("0").trimCharactersAtEnd(".");
+                }
+                recap << p->getName(40) << " = " << txt << "\n";
             }
             else
                 recap << u8("Ignoré (inconnu) : ") << kv.name.toString() << "\n";
