@@ -467,6 +467,16 @@ void ToneForgeEditor::rebuildBrands()
             for (auto* o : brandBtns)
                 o->setToggleState(o->getButtonText() == (brandFilter.isEmpty() ? juce::String("Toutes") : brandFilter), juce::dontSendNotification);
             filterList();
+            // Charge la 1re capture de la marque, sauf si celle en cours en est déjà
+            const auto cur = showModels ? proc.modelFile : proc.irFile;
+            const auto& src = showModels ? models : irs;
+            if (brandFilter.isNotEmpty() && std::none_of(src.begin(), src.end(), [&](const Entry& e) { return e.file == cur && e.brand == brandFilter; }))
+                for (const auto& e : src)
+                    if (e.brand == brandFilter)
+                    {
+                        load(e.file, showModels);
+                        break;
+                    }
         };
         addAndMakeVisible(b);
     }
