@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <regex>
 #if JucePlugin_Build_Standalone
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #endif
@@ -1229,7 +1230,8 @@ void ToneForgeEditor::askAi()
              "- capture / pedale / ir : un identifiant de la liste, ou null pour garder l'actuel ; pedal_on = 0 pour jouer sans pédale.\n"
              "- reglages : seulement les paramètres à changer, valeurs dans les bornes ; active ou coupe les blocs avec les *_on.\n"
              "- explication : en français, 3 à 6 phrases : pourquoi ces choix, et ce qui manque si la bibliothèque n'a "
-             "pas la capture idéale (quel ampli ou quelle pédale chercher sur TONE3000).");
+             "pas la capture idéale (quel ampli ou quelle pédale chercher sur TONE3000). Nomme le matériel, "
+             "jamais les identifiants (M12, P2, I3...).");
 
     aiBusy = true;
     aiGo.setEnabled(false);
@@ -1300,5 +1302,8 @@ void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err
     dirty = true;
     for (auto& b : blocks)
         b->repaint();
-    aiOut.setText(j["explication"].toString() + "\n\n" + recap);
+    // Filet : retire les identifiants internes « (M12) » que le modèle glisserait malgré la consigne.
+    static const std::regex ids(R"(\s*\(\s*[MPI]\d+(\s*[,/]\s*[MPI]\d+)*\s*\))");
+    const auto why = std::regex_replace(j["explication"].toString().toStdString(), ids, "");
+    aiOut.setText(juce::String::fromUTF8(why.c_str()) + "\n\n" + recap);
 }
