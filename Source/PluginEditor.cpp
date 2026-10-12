@@ -1,5 +1,4 @@
 #include "PluginEditor.h"
-#include "AiTone.h"
 #if JucePlugin_Build_Standalone
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #endif
@@ -457,6 +456,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
 
 ToneForgeEditor::~ToneForgeEditor()
 {
+    aiJob.reset();   // coupe une requête IA en cours et attend son fil
     proc.apvts.state.removeListener(this);
     stopTimer();
     setLookAndFeel(nullptr);
@@ -1164,16 +1164,12 @@ void ToneForgeEditor::askAi()
     aiBusy = true;
     aiGo.setEnabled(false);
     aiOut.setText(u8("Génération du son avec ") + cfg.model + "...");
-    juce::Thread::launch([sp = juce::Component::SafePointer<ToneForgeEditor>(this), cfg, system, demande]
-    {
-        juce::String err;
-        const auto reply = ai::chat(cfg, system, demande, err);
-        juce::MessageManager::callAsync([sp, reply, err]
+    aiJob = std::make_unique<ai::Job>(cfg, system, demande,
+        [sp = juce::Component::SafePointer<ToneForgeEditor>(this)](const juce::String& reply, const juce::String& err)
         {
             if (sp != nullptr)
                 sp->applyAi(reply, err);
         });
-    });
 }
 
 void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err)
@@ -1197,7 +1193,7 @@ void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err
     {
         const auto s = id.toString().trim();
         const int i = s.getTrailingIntValue();
-        if (s.isNotEmpty() && s != "null" && juce::isPositiveAndBelow(i, lib.size()))
+        if (s.startsWithIgnoreCase(isModel ? "M" : "I") && juce::isPositiveAndBelow(i, lib.size()))
         {
             const auto e = lib[i];   // copie : load() peut toucher aux listes
             load(e.file, isModel);

@@ -1,5 +1,6 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "AiTone.h"
 
 // Thème repris d'AmpliTube UI (palette sombre, accent orange / cyan).
 namespace tf
@@ -100,6 +101,7 @@ private:
     juce::TextButton aiBtn, aiGo, aiClose { "Fermer" };
     juce::TextEditor aiPrompt, aiOut;
     bool aiOpen = false, aiBusy = false;
+    std::unique_ptr<ai::Job> aiJob;
 
     juce::Rectangle<int> topBar, chainArea, panelArea, plateArea, grilleArea, lcdArea, meterIn, meterOut;
     juce::Image grain, bgCache;   // texture tolex ; décor statique pré-rendu (refait au changement de bloc)
