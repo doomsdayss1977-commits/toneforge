@@ -132,7 +132,7 @@ Colour pedalColour(int i)
 juce::String brandOf(const juce::String& s)
 {
     static const std::pair<const char*, const char*> rules[] = {
-        { "Gallien", "Gallien-Krueger" }, { "GK ", "Gallien-Krueger" }, { "Ampeg", "Ampeg" }, { "SVT", "Ampeg" },
+        { "Gallien", "Gallien-Krueger" }, { "GK", "Gallien-Krueger" }, { "Ampeg", "Ampeg" }, { "SVT", "Ampeg" },
         { "Portaflex", "Ampeg" }, { "B15", "Ampeg" }, { "B-15", "Ampeg" }, { "B18", "Ampeg" }, { "Marshall", "Marshall" },
         { "JCM", "Marshall" }, { "JMP", "Marshall" }, { "Plexi", "Marshall" }, { "Jubilee", "Marshall" }, { "JVM", "Marshall" },
         { "Fender", "Fender" }, { "Bassman", "Fender" }, { "Twin", "Fender" }, { "Deluxe", "Fender" }, { "Princeton", "Fender" },
@@ -142,13 +142,27 @@ juce::String brandOf(const juce::String& s)
         { "Bogner", "Bogner" }, { "Diezel", "Diezel" }, { "ENGL", "ENGL" }, { "Hiwatt", "Hiwatt" }, { "Laney", "Laney" },
         { "Darkglass", "Darkglass" }, { "SansAmp", "Tech 21" }, { "Tech 21", "Tech 21" }, { "Aguilar", "Aguilar" },
         { "Markbass", "Markbass" }, { "Hartke", "Hartke" }, { "Trace Elliot", "Trace Elliot" }, { "Victory", "Victory" },
-        { "Revv", "Revv" }, { "Dumble", "Dumble" }, { "Two Rock", "Two-Rock" }, { "Matchless", "Matchless" },
+        { "Revv", "Revv" }, { "Dumble", "Dumble" }, { "Two Rock", "Two-Rock" }, { "Two-Rock", "Two-Rock" }, { "Matchless", "Matchless" },
         { "Suhr", "Suhr" }, { "Splawn", "Splawn" }, { "Randall", "Randall" }, { "Blackstar", "Blackstar" },
         { "Celestion", "Celestion" }, { "Greenback", "Celestion" }, { "V30", "Celestion" }, { "Vintage 30", "Celestion" },
-        { "Jensen", "Jensen" }, { "Eminence", "Eminence" }, { "OwnHammer", "OwnHammer" }, { "York", "York Audio" },
+        { "Jensen", "Jensen" }, { "Eminence", "Eminence" }, { "OwnHammer", "OwnHammer" }, { "York Audio", "York Audio" },
         { "ML Sound", "ML Sound Lab" }, { "Bergantino", "Bergantino" }, { "Boss", "Boss" }, { "Ibanez", "Ibanez" } };
+    // Mot entier : pas de lettre juste avant, ni juste après un mot-clé finissant par une lettre
+    // (JCM800, B15N acceptés ; Twins, Bossa refusés).
+    auto hasWord = [&s](const juce::String& w)
+    {
+        for (int i = s.indexOfIgnoreCase(w); i >= 0; i = s.indexOfIgnoreCase(i + 1, w))
+        {
+            const auto end = i + w.length();
+            if ((i == 0 || !juce::CharacterFunctions::isLetter(s[i - 1]))
+                && (end >= s.length() || !juce::CharacterFunctions::isLetter(w.getLastCharacter())
+                    || !juce::CharacterFunctions::isLetter(s[end])))
+                return true;
+        }
+        return false;
+    };
     for (const auto& [needle, brand] : rules)
-        if (s.containsIgnoreCase(needle))
+        if (hasWord(needle))
             return brand;
     return "Autres";
 }
@@ -471,8 +485,8 @@ void ToneForgeEditor::rebuildBrands()
             const auto cur = showModels ? proc.modelFile : proc.irFile;
             const auto& src = showModels ? models : irs;
             if (brandFilter.isNotEmpty() && std::none_of(src.begin(), src.end(), [&](const Entry& e) { return e.file == cur && e.brand == brandFilter; }))
-                for (const auto& e : src)
-                    if (e.brand == brandFilter)
+                for (const auto& e : shown)   // parmi les captures visibles (recherche comprise)
+                    if (e.file != juce::File())
                     {
                         load(e.file, showModels);
                         break;
