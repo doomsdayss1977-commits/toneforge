@@ -640,6 +640,8 @@ void ToneForgeEditor::load(const juce::File& f, int kind)
     dirty = true;
     if (err.isNotEmpty())
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "ToneForge", err);
+    else if (kind == 1 && !blockOn(kPedal))   // choisir une pédale l'allume
+        toggleBlock(kPedal);
     selectBlock(blockOf(kind));
     refreshLabels();
     list.repaint();
@@ -693,6 +695,8 @@ bool ToneForgeEditor::blockOn(int i) const
 
 void ToneForgeEditor::toggleBlock(int i)
 {
+    if (i == kPedal && proc.pedalFile == juce::File())   // rien à allumer : ouvrir la liste des pédales
+        return selectBlock(kPedal);
     if (auto* p = proc.apvts.getParameter(defs[i].onId))
     {
         p->beginChangeGesture();

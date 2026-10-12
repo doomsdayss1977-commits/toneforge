@@ -335,6 +335,16 @@ void ToneForgeProcessor::setStateInformation(const void* data, int size)
         loadModel(m);
     if (pd.existsAsFile())
         loadModel(pd, true);
+    else if (pedalFile != juce::File())   // état sans pédale : retirer celle en cours
+    {
+        std::unique_ptr<nam::DSP> old;
+        {
+            const juce::SpinLock::ScopedLockType sl(pedal.lock);
+            std::swap(pedal.model, old);
+            pedal.captureRate = 0;
+        }
+        pedalFile = juce::File();
+    }
     if (ir.existsAsFile())
         loadIR(ir);
 }
