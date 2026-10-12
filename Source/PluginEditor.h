@@ -70,7 +70,12 @@ private:
     void selectBlock(int i);
     bool blockOn(int i) const;
     void toggleBlock(int i);
-    void load(const juce::File&, bool isModel);
+    // Bibliothèques : 0 = amplis, 1 = pédales, 2 = baffles (IR)
+    const juce::Array<Entry>& lib() const { return tab == 0 ? models : tab == 1 ? pedals : irs; }
+    juce::File current(int kind) const { return kind == 0 ? proc.modelFile : kind == 1 ? proc.pedalFile : proc.irFile; }
+    static int blockOf(int kind) { return kind == 0 ? kAmp : kind == 1 ? kPedal : kCab; }
+    void setTab(int t);
+    void load(const juce::File&, int kind);
     void pick();
     void refreshLabels();
     void renderBackground();
@@ -81,14 +86,15 @@ private:
     TfLook look;
     juce::Array<BlockDef> defs;
     std::vector<std::unique_ptr<Block>> blocks;
-    int selected = 2;   // Ampli
+    enum { kPedal = 2, kAmp = 3, kCab = 4 };   // blocs NAM et IR dans la chaîne
+    int selected = kAmp;
 
     juce::TextEditor search;
-    juce::TextButton ampTab { "Amplis" }, cabTab { "Baffles" }, rescanBtn { "Actualiser" }, fileBtn { "Fichier..." };
+    juce::TextButton ampTab { "Amplis" }, pedTab { juce::CharPointer_UTF8("Pédales") }, cabTab { "Baffles" }, rescanBtn { "Actualiser" }, fileBtn { "Fichier..." };
     juce::Label countLbl, nameLbl, warnLbl, panelTitle, panelInfo;
     juce::ListBox list { "captures", this };
-    juce::Array<Entry> models, irs, shown;
-    bool showModels = true;
+    juce::Array<Entry> models, pedals, irs, shown;
+    int tab = 0;
     juce::OwnedArray<juce::TextButton> brandBtns;   // filtre par marque (« Toutes » en premier)
     juce::String brandFilter;
 

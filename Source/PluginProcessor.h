@@ -4,7 +4,7 @@
 #include "NAM/dsp.h"
 #include "Effects.h"
 
-// Chaîne : gate -> compresseur -> gain d'entrée -> NAM -> IR -> EQ 3 bandes -> chorus -> delay -> reverb -> volume
+// Chaîne : gate -> compresseur -> pédale NAM -> gain d'entrée -> ampli NAM -> IR -> EQ 3 bandes -> chorus -> delay -> reverb -> volume
 class ToneForgeProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
@@ -33,12 +33,13 @@ public:
     void setStateInformation(const void*, int) override;
 
     // Chargement depuis le thread de l'interface ; renvoie un message d'erreur vide si OK.
-    juce::String loadModel(const juce::File&);
+    juce::String loadModel(const juce::File&, bool isPedal = false);
     juce::String loadIR(const juce::File&);
-    juce::File modelFile, irFile;
-    juce::String modelWarning() const   // ex. capture rééchantillonnée ; suit les changements de taux du projet
+    juce::File modelFile, pedalFile, irFile;
+    juce::String modelWarning(bool isPedal = false) const   // ex. capture rééchantillonnée ; suit les changements de taux du projet
     {
-        const int c = captureRate, p = projectRate;
+        const auto& s = isPedal ? pedal : amp;
+        const int c = s.captureRate, p = s.projectRate;
         return c > 0 ? "Capture à " + juce::String(c) + " Hz, rééchantillonnée depuis " + juce::String(p) + " Hz"
                      : juce::String();
     }
@@ -50,10 +51,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
     void updateEq();
 
-    juce::SpinLock modelLock;
-    std::unique_ptr<nam::DSP> model;
-    std::vector<float> namIn, namOut;
-    // Rééchantillonnage autour de NAM quand la capture n'est pas au taux du projet (protégé par modelLock).
+    // Rééchantillonnage autour de NAM quand la capture n'est pas au taux du projet (protégé par le verrou de l'emplacement).
     struct Resampler
     {
         bool on = false;
@@ -61,10 +59,19 @@ private:
         juce::Interpolators::Lagrange up, down;
         std::vector<float> in, mid, out;   // file d'entrée (projet), bloc NAM, file de sortie (capture)
         int inN = 0, outN = 0;
-    } rs;
-    std::atomic<int> captureRate { 0 }, projectRate { 0 };   // capture rééchantillonnée (0 = non), lus par l'interface
-    void configureModel(nam::DSP&, Resampler&);
-    void processResampled(float* x, int n);
+    };
+    // Emplacement de capture NAM (pédale ou ampli). Le thread audio n'y prend le verrou qu'en try-lock.
+    struct NamSlot
+    {
+        juce::SpinLock lock;
+        std::unique_ptr<nam::DSP> model;
+        std::vector<float> in, out;
+        Resampler rs;
+        std::atomic<int> captureRate { 0 }, projectRate { 0 };   // capture rééchantillonnée (0 = non), lus par l'interface
+    } pedal, amp;
+    void configureModel(nam::DSP&, NamSlot&);
+    void processResampled(NamSlot&, float* x, int n);
+    void runNam(NamSlot&, float* x, int n, float gainIn, float gainOut);
 
     juce::dsp::NoiseGate<float> gate;
     juce::dsp::Convolution cab { juce::dsp::Convolution::NonUniform { 256 } };

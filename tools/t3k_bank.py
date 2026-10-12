@@ -1,4 +1,4 @@
-"""Banque TONE3000 : chercher et télécharger des captures NAM / IR dans ToneForge\\models et \\irs."""
+"""Banque TONE3000 : chercher et télécharger des captures NAM / IR dans ToneForge\\models, \\pedals et \\irs."""
 import json
 import os
 import re
@@ -113,7 +113,8 @@ def safe(s):
 def download_tone(sess, tone, log):
     """Télécharge toutes les captures d'un son. Renvoie le nombre de fichiers écrits."""
     is_ir = tone.get('format') == 'ir'
-    folder = os.path.join(ROOT, 'irs' if is_ir else 'models', safe(tone['title']))
+    sub = 'irs' if is_ir else 'pedals' if tone.get('gear') == 'pedal' else 'models'
+    folder = os.path.join(ROOT, sub, safe(tone['title']))
     os.makedirs(folder, exist_ok=True)
     n, page = 0, 1
     while True:

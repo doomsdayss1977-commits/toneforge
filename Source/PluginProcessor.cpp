@@ -2,6 +2,8 @@
 #include "PluginEditor.h"
 #include "NAM/get_dsp.h"
 
+static juce::String u8p(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
+
 ToneForgeProcessor::ToneForgeProcessor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
@@ -60,6 +62,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
                                             shortName + " " + juce::String(juce::CharPointer_UTF8(d.params[i].label)),
                                             R(0.f, 1.f), d.params[i].def));
     }
+    // Pédale NAM avant l'ampli (ajoutée en fin de liste : n'altère pas les paramètres existants)
+    p.push_back(std::make_unique<juce::AudioParameterBool>("pedal_on", u8p("Pédale"), true));
+    p.push_back(std::make_unique<P>("pedal_in", u8p("Pédale entrée (dB)"), R(-24.f, 24.f), 0.f));
+    p.push_back(std::make_unique<P>("pedal_out", u8p("Pédale sortie (dB)"), R(-24.f, 24.f), 0.f));
     return { p.begin(), p.end() };
 }
 
@@ -74,15 +80,16 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     sr = sampleRate;
     maxBlock = samplesPerBlock;
-    namIn.assign((size_t) samplesPerBlock, 0.f);
-    namOut.assign((size_t) samplesPerBlock, 0.f);
     scratch.assign((size_t) samplesPerBlock, 0.f);
     for (auto& e : fx)
         e->setSampleRate((float) sampleRate);
+    for (auto* s : { &pedal, &amp })
     {
-        const juce::SpinLock::ScopedLockType sl(modelLock);
-        if (model)
-            configureModel(*model, rs);
+        const juce::SpinLock::ScopedLockType sl(s->lock);
+        s->in.assign((size_t) samplesPerBlock, 0.f);
+        s->out.assign((size_t) samplesPerBlock, 0.f);
+        if (s->model)
+            configureModel(*s->model, *s);
     }
     juce::dsp::ProcessSpec mono { sr, (juce::uint32) samplesPerBlock, 1 };
     gate.prepare(mono);
@@ -164,25 +171,10 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         std::copy(x + o, x + o + c, scratch.data());
         runFx(true, x + o, scratch.data(), c);   // compresseur avant l'ampli, en mono
     });
+    if (v("pedal_on") > 0.5f)
+        runNam(pedal, x, n, juce::Decibels::decibelsToGain(v("pedal_in")), juce::Decibels::decibelsToGain(v("pedal_out")));
     juce::FloatVectorOperations::multiply(x, juce::Decibels::decibelsToGain(v("input")), n);
-
-    {
-        const juce::SpinLock::ScopedTryLockType sl(modelLock);
-        if (sl.isLocked() && model)
-        {
-            if (rs.on)
-                chunks(namIn.size(), [&](int o, int c) { processResampled(x + o, c); });
-            else
-                chunks(namIn.size(), [&](int o, int c)
-                {
-                    std::copy(x + o, x + o + c, namIn.data());
-                    float* in = namIn.data();
-                    float* out = namOut.data();
-                    model->process(&in, &out, c);
-                    std::copy(out, out + c, x + o);
-                });
-        }
-    }
+    runNam(amp, x, n, 1.f, 1.f);
 
     if (irLoaded && v("ir_on") > 0.5f)
         cab.process(monoCtx);
@@ -208,7 +200,33 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     peak(outPeak, buffer.getMagnitude(0, 0, n));
 }
 
-juce::String ToneForgeProcessor::loadModel(const juce::File& f)
+// Capture NAM d'un emplacement ; les gains ne s'appliquent que si une capture est chargée.
+void ToneForgeProcessor::runNam(NamSlot& s, float* x, int n, float gainIn, float gainOut)
+{
+    const juce::SpinLock::ScopedTryLockType sl(s.lock);
+    if (!sl.isLocked() || !s.model)
+        return;
+    juce::FloatVectorOperations::multiply(x, gainIn, n);
+    // Les tampons internes font maxBlock : un bloc plus long est traité par tranches.
+    const int cap = (int) s.in.size();
+    for (int o = 0; cap > 0 && o < n; o += cap)
+    {
+        const int c = juce::jmin(cap, n - o);
+        if (s.rs.on)
+            processResampled(s, x + o, c);
+        else
+        {
+            std::copy(x + o, x + o + c, s.in.data());
+            float* in = s.in.data();
+            float* out = s.out.data();
+            s.model->process(&in, &out, c);
+            std::copy(out, out + c, x + o);
+        }
+    }
+    juce::FloatVectorOperations::multiply(x, gainOut, n);
+}
+
+juce::String ToneForgeProcessor::loadModel(const juce::File& f, bool isPedal)
 {
     std::unique_ptr<nam::DSP> m;
     try
@@ -224,22 +242,24 @@ juce::String ToneForgeProcessor::loadModel(const juce::File& f)
     {
         // Configuré sous le verrou : un prepareToPlay concurrent ne peut pas laisser des tampons à l'ancienne taille.
         // Le thread audio ne fait qu'un try-lock : il saute NAM le temps du chargement, sans bloquer.
-        const juce::SpinLock::ScopedLockType sl(modelLock);
-        configureModel(*m, rs);
-        std::swap(model, m);
+        auto& s = isPedal ? pedal : amp;
+        const juce::SpinLock::ScopedLockType sl(s.lock);
+        configureModel(*m, s);
+        std::swap(s.model, m);
     }
-    modelFile = f;
+    (isPedal ? pedalFile : modelFile) = f;
     return {};   // l'ancien modèle est détruit ici, hors du verrou
 }
 
 // Prépare la capture au taux du projet, ou au sien avec rééchantillonnage (Lagrange, ~2 échantillons
 // de latence par étage). Alloue : jamais depuis le thread audio en cours de lecture.
-void ToneForgeProcessor::configureModel(nam::DSP& m, Resampler& r)
+void ToneForgeProcessor::configureModel(nam::DSP& m, NamSlot& s)
 {
+    auto& r = s.rs;
     const double want = m.GetExpectedSampleRate();
     r.on = want > 0 && std::abs(want - sr) > 1 && !m.SupportsArbitrarySampleRate();
-    captureRate = r.on ? juce::roundToInt(want) : 0;
-    projectRate = juce::roundToInt(sr);
+    s.captureRate = r.on ? juce::roundToInt(want) : 0;
+    s.projectRate = juce::roundToInt(sr);
     r.ratio = r.on ? want / sr : 1.0;
     const int blk = (int) std::ceil(maxBlock * r.ratio) + 16;
     m.Reset(r.on ? want : sr, r.on ? blk : maxBlock);
@@ -252,9 +272,9 @@ void ToneForgeProcessor::configureModel(nam::DSP& m, Resampler& r)
     r.outN = 12;   // amorce de silence : la sortie ne manque jamais d'échantillons
 }
 
-void ToneForgeProcessor::processResampled(float* x, int n)
+void ToneForgeProcessor::processResampled(NamSlot& s, float* x, int n)
 {
-    auto& r = rs;
+    auto& r = s.rs;
     std::copy(x, x + n, r.in.data() + r.inN);
     r.inN += n;
 
@@ -267,7 +287,7 @@ void ToneForgeProcessor::processResampled(float* x, int n)
 
     float* in = r.mid.data();
     float* out = r.out.data() + r.outN;
-    model->process(&in, &out, m);
+    s.model->process(&in, &out, m);
     r.outN += m;
 
     // Descente au taux du projet : exactement n échantillons.
@@ -296,6 +316,7 @@ void ToneForgeProcessor::getStateInformation(juce::MemoryBlock& dest)
 {
     auto s = apvts.copyState();
     s.setProperty("model", modelFile.getFullPathName(), nullptr);
+    s.setProperty("pedal", pedalFile.getFullPathName(), nullptr);
     s.setProperty("ir", irFile.getFullPathName(), nullptr);
     if (auto xml = s.createXml())
         copyXmlToBinary(*xml, dest);
@@ -308,9 +329,12 @@ void ToneForgeProcessor::setStateInformation(const void* data, int size)
         return;
     auto s = juce::ValueTree::fromXml(*xml);
     apvts.replaceState(s);
-    const juce::File m(s.getProperty("model").toString()), ir(s.getProperty("ir").toString());
+    const juce::File m(s.getProperty("model").toString()), pd(s.getProperty("pedal").toString()),
+        ir(s.getProperty("ir").toString());
     if (m.existsAsFile())
         loadModel(m);
+    if (pd.existsAsFile())
+        loadModel(pd, true);
     if (ir.existsAsFile())
         loadIR(ir);
 }
