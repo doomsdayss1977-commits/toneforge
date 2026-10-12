@@ -164,6 +164,27 @@ Colour brandColour(const juce::String& b)
             return Colour(c);
     return Colour::fromHSV((float) ((juce::uint32) b.hashCode() % 360u) / 360.f, 0.5f, 0.85f, 1.f);
 }
+
+// Habillage de la façade selon la marque de la capture chargée.
+struct Skin
+{
+    Colour tolex, piping, plate, grille, logo;
+    const char* font;
+    float size;
+    bool italic;
+};
+Skin skinFor(const juce::String& b)
+{
+    if (b == "Marshall")    return { Colour(0xff141414), Colour(0xfff2f2f2), Colour(0xffc9a65a), Colour(0xff2b2722), Colour(0xfff4f1e8), "Segoe Script", 60.f, false };
+    if (b == "Fender")      return { Colour(0xff111111), Colour(0xffc8ccd2), Colour(0xff1b1c1f), Colour(0xff8f9399), Colour(0xffe9ecef), "Segoe Script", 60.f, false };
+    if (b == "Ampeg")       return { Colour(0xff121212), Colour(0xffc8ccd2), Colour(0xffb9c0c9), Colour(0xff1c1d20), Colour(0xff3f7fe0), "Segoe Script", 60.f, false };
+    if (b == "Mesa/Boogie") return { Colour(0xff0c0c0c), Colour(0xff4a4d52), Colour(0xff17181a), Colour(0xff151515), Colour(0xffc8ccd2), "Georgia", 48.f, true };
+    if (b == "Orange")      return { Colour(0xffe8701a), Colour(0xff1a1a1a), Colour(0xffefe6d2), Colour(0xffcfc2a0), Colour(0xff151515), "Arial Black", 54.f, false };
+    if (b == "Vox")         return { Colour(0xff141414), Colour(0xffc9a65a), Colour(0xffa0522d), Colour(0xff4a3020), Colour(0xfff4f1e8), "Arial Black", 58.f, false };
+    if (b == "EVH / Peavey")return { Colour(0xff0f0f0f), Colour(0xff6a6d72), Colour(0xff1a1a1a), Colour(0xff181818), Colour(0xffe74c3c), "Impact", 58.f, false };
+    if (b == "Gallien-Krueger") return { Colour(0xff151515), Colour(0xff6a6d72), Colour(0xff2a2b2e), Colour(0xff1d1d1d), Colour(0xffe9ecef), "Impact", 52.f, false };
+    return { Colour(0xff151515), Colour(0xfff1e6c8), Colour(0xffc9a65a), Colour(0xff2a2620), Colour(0xfff4f1e8), "Segoe Script", 56.f, false };
+}
 } // namespace
 
 //==============================================================================
@@ -190,7 +211,7 @@ TfLook::TfLook()
 }
 
 // Potard chromé : graduations imprimées, arc lumineux de la valeur, jupe moletée, capuchon chromé.
-void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider&)
+void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& sl)
 {
     using juce::Colour;
     namespace Colours = juce::Colours;
@@ -199,7 +220,7 @@ void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, flo
     const auto c = box.getCentre();
     const float a = a0 + pos * (a1 - a0);
 
-    g.setColour(tf::ink.withAlpha(0.75f));
+    g.setColour(sl.findColour(juce::Slider::textBoxTextColourId).withAlpha(0.75f));
     for (int i = 0; i <= 10; ++i)
     {
         const float t = a0 + (a1 - a0) * (float) i / 10.f;
@@ -267,7 +288,7 @@ void TfLook::drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bo
     g.setColour(juce::Colours::black.withAlpha(0.7f));
     g.drawEllipse(nut, 1.f);
     led(g, juce::Rectangle<float>(9.f, 9.f).withCentre({ 36.f, c.y }), Colour(0xffff3b30), on);
-    g.setColour(tf::ink);
+    g.setColour(b.findColour(juce::ToggleButton::textColourId));
     g.setFont(juce::FontOptions(13.f, juce::Font::bold));
     g.drawText(on ? juce::String("EN MARCHE") : u8("COUPÉ"), b.getLocalBounds().withTrimmedLeft(48), juce::Justification::centredLeft);
 }
@@ -788,19 +809,22 @@ void ToneForgeEditor::renderBackground()
         }
     }
 
-    // Façade d'ampli : tolex, liseré crème, plaque de commande, grille
+    // Façade d'ampli habillée selon la marque de la capture : tolex, liseré, plaque, grille, logo
+    const auto brand = proc.modelFile == juce::File() ? juce::String()
+                     : brandOf(proc.modelFile.getParentDirectory().getFileName() + " " + proc.modelFile.getFileNameWithoutExtension());
+    const auto sk = skinFor(brand);
     const auto pa = panelArea.toFloat();
     juce::DropShadow(Colours::black.withAlpha(0.7f), 18, { 0, 6 }).drawForRectangle(g, panelArea);
     juce::Path amp;
     amp.addRoundedRectangle(pa, 12.f);
-    textured(g, amp, Colour(0xff151515), grain);
+    textured(g, amp, sk.tolex, grain);
     g.setColour(Colours::black);
     g.strokePath(amp, juce::PathStrokeType(1.5f));
-    g.setColour(tf::cream.withAlpha(0.85f));
+    g.setColour(sk.piping.withAlpha(0.85f));
     g.drawRoundedRectangle(pa.reduced(7.f), 8.f, 2.5f);
 
     const auto pl = plateArea.toFloat();
-    const auto plateCol = selected == 2 ? Colour(0xffc9a65a) : pedalColour(selected).interpolatedWith(Colour(0xffd3d6db), 0.62f);
+    const auto plateCol = selected == 2 ? sk.plate : pedalColour(selected).interpolatedWith(Colour(0xffd3d6db), 0.62f);
     juce::DropShadow(Colours::black.withAlpha(0.6f), 8, { 0, 3 }).drawForRectangle(g, plateArea);
     {
         juce::Graphics::ScopedSaveState s(g);
@@ -817,16 +841,30 @@ void ToneForgeEditor::renderBackground()
                      pl.getBottomLeft().translated(10.f, -10.f), pl.getBottomRight().translated(-10.f, -10.f) })
         screw(g, pt, 3.5f);
 
+    // Sérigraphie lisible sur plaque claire ou sombre
+    const auto ink = plateCol.getPerceivedBrightness() > 0.5f ? tf::ink : tf::cream;
+    panelTitle.setColour(juce::Label::textColourId, ink);
+    bypass.setColour(juce::ToggleButton::textColourId, ink);
+    for (auto& k : knobs)
+    {
+        k->label.setColour(juce::Label::textColourId, ink);
+        k->slider.setColour(juce::Slider::textBoxTextColourId, ink);
+    }
+
     const auto gr = grilleArea.toFloat();
-    grille(g, gr, selected == 3 ? Colour(0xff3a2c1c) : Colour(0xff2a2620));
+    grille(g, gr, selected == 3 ? Colour(0xff3a2c1c) : sk.grille);
     g.setColour(Colours::black);
     g.drawRect(gr, 1.5f);
     const auto logoArea = gr.withTrimmedBottom(40.f).toNearestInt();
-    g.setFont(juce::FontOptions("Segoe Script", 56.f, juce::Font::bold));
+    const bool brandLogo = selected == 2 && brand.isNotEmpty() && brand != "Autres";
+    const auto text = brandLogo ? brand : defs[selected].title;
+    const auto lc = brandLogo ? sk.logo : Colour(0xfff4f1e8);
+    g.setFont(brandLogo ? juce::FontOptions(sk.font, sk.size, sk.italic ? juce::Font::bold | juce::Font::italic : juce::Font::bold)
+                        : juce::FontOptions("Segoe Script", 56.f, juce::Font::bold));
     g.setColour(Colours::black.withAlpha(0.75f));
-    g.drawText(defs[selected].title, logoArea + juce::Point<int>(3, 4), juce::Justification::centred);
-    g.setGradientFill(juce::ColourGradient(Colour(0xfffff7e0), 0, (float) logoArea.getCentreY() - 24.f, Colour(0xffc9b88a), 0, (float) logoArea.getCentreY() + 24.f, false));
-    g.drawText(defs[selected].title, logoArea, juce::Justification::centred);
+    g.drawText(text, logoArea + juce::Point<int>(3, 4), juce::Justification::centred);
+    g.setGradientFill(juce::ColourGradient(lc.brighter(0.3f), 0, (float) logoArea.getCentreY() - 24.f, lc.darker(0.3f), 0, (float) logoArea.getCentreY() + 24.f, false));
+    g.drawText(text, logoArea, juce::Justification::centred);
 }
 
 void ToneForgeEditor::paint(juce::Graphics& g)
