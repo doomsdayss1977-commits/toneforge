@@ -376,8 +376,8 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
         b->setClickingTogglesState(false);
         addAndMakeVisible(b);
     }
-    ampTab.onClick = [this] { showModels = true; filterList(); };
-    cabTab.onClick = [this] { showModels = false; filterList(); };
+    ampTab.onClick = [this] { showModels = true; brandFilter.clear(); rebuildBrands(); };
+    cabTab.onClick = [this] { showModels = false; brandFilter.clear(); rebuildBrands(); };
     rescanBtn.onClick = [this] { scanLibrary(); };
     fileBtn.onClick = [this] { pick(); };
     addAndMakeVisible(rescanBtn);
@@ -444,7 +444,34 @@ void ToneForgeEditor::scanLibrary()
     };
     models = scan("models", "*.nam");
     irs = scan("irs", "*.wav");
+    rebuildBrands();
+}
+
+// Un bouton par marque présente dans l'onglet courant (déjà triées par marque).
+void ToneForgeEditor::rebuildBrands()
+{
+    brandBtns.clear();
+    juce::StringArray names { "Toutes" };
+    for (const auto& e : showModels ? models : irs)
+        names.addIfNotAlreadyThere(e.brand);
+    if (!names.contains(brandFilter))
+        brandFilter.clear();
+    for (const auto& n : names)
+    {
+        auto* b = brandBtns.add(new juce::TextButton(n));
+        b->setClickingTogglesState(false);
+        b->setToggleState(n == "Toutes" ? brandFilter.isEmpty() : n == brandFilter, juce::dontSendNotification);
+        b->onClick = [this, n]
+        {
+            brandFilter = n == "Toutes" ? juce::String() : n;
+            for (auto* o : brandBtns)
+                o->setToggleState(o->getButtonText() == (brandFilter.isEmpty() ? juce::String("Toutes") : brandFilter), juce::dontSendNotification);
+            filterList();
+        };
+        addAndMakeVisible(b);
+    }
     filterList();
+    resized();
 }
 
 void ToneForgeEditor::filterList()
@@ -454,7 +481,8 @@ void ToneForgeEditor::filterList()
     int count = 0;
     juce::String last;
     for (const auto& e : showModels ? models : irs)
-        if (q.isEmpty() || (e.group + " " + e.name + " " + e.brand).containsIgnoreCase(q))
+        if ((brandFilter.isEmpty() || e.brand == brandFilter)
+            && (q.isEmpty() || (e.group + " " + e.name + " " + e.brand).containsIgnoreCase(q)))
         {
             if (e.brand != last)
                 shown.add({ {}, {}, e.brand, e.brand });   // en-tête de marque
@@ -945,6 +973,23 @@ void ToneForgeEditor::resized()
     tools.removeFromRight(6);
     rescanBtn.setBounds(tools.removeFromRight(84));
     side.removeFromTop(6);
+    {
+        // Boutons de marque en lignes qui se replient
+        int x = side.getX(), y = side.getY();
+        for (auto* b : brandBtns)
+        {
+            const int bw = juce::GlyphArrangement::getStringWidthInt(juce::FontOptions(13.f), b->getButtonText()) + 18;
+            if (x > side.getX() && x + bw > side.getRight())
+            {
+                x = side.getX();
+                y += 26;
+            }
+            b->setBounds(x, y, juce::jmin(bw, side.getWidth()), 22);
+            x += bw + 4;
+        }
+        if (!brandBtns.isEmpty())
+            side.setTop(y + 30);
+    }
     list.setBounds(side);
 
     auto c = r.reduced(16);

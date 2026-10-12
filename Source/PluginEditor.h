@@ -65,6 +65,7 @@ private:
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { dirty = true; }
     void scanLibrary();
     void filterList();
+    void rebuildBrands();
     void selectBlock(int i);
     bool blockOn(int i) const;
     void toggleBlock(int i);
@@ -85,6 +86,8 @@ private:
     juce::ListBox list { "captures", this };
     juce::Array<Entry> models, irs, shown;
     bool showModels = true;
+    juce::OwnedArray<juce::TextButton> brandBtns;   // filtre par marque (« Toutes » en premier)
+    juce::String brandFilter;
 
     juce::ToggleButton bypass;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt;
