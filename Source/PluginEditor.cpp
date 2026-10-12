@@ -903,6 +903,7 @@ void ToneForgeEditor::renderBackground()
     g.drawText(text, logoArea + juce::Point<int>(3, 4), juce::Justification::centred);
     g.setGradientFill(juce::ColourGradient(lc.brighter(0.3f), 0, (float) logoArea.getCentreY() - 24.f, lc.darker(0.3f), 0, (float) logoArea.getCentreY() + 24.f, false));
     g.drawText(text, logoArea, juce::Justification::centred);
+    repaint();   // le décor a changé : toute la fenêtre, pas seulement les composants
 }
 
 void ToneForgeEditor::paint(juce::Graphics& g)
