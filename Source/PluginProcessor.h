@@ -5,12 +5,17 @@
 #include "Effects.h"
 
 inline juce::String u8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
+// Définis dans PluginEditor.cpp (bibliothèque et marques partagées avec le serveur OSC)
+juce::File libraryRoot();
+juce::String captureBrand(const juce::String& s, bool pedal);
+class OscServer;
 
 // Chaîne : gate -> compresseur -> pédale NAM -> gain d'entrée -> ampli NAM -> IR -> EQ 3 bandes -> chorus -> delay -> reverb -> volume
 class ToneForgeProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
     ToneForgeProcessor();
+    ~ToneForgeProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -37,7 +42,12 @@ public:
     // Chargement depuis le thread de l'interface ; renvoie un message d'erreur vide si OK.
     juce::String loadModel(const juce::File&, bool isPedal = false);
     juce::String loadIR(const juce::File&);
-    juce::File modelFile, pedalFile, irFile;
+    juce::File modelFile, pedalFile, irFile;   // écrits sous fileLock (setStateInformation peut venir d'un autre fil)
+    juce::File loadedFile(int kind) const   // 0 ampli, 1 pédale, 2 IR ; copie sous verrou
+    {
+        const juce::ScopedLock sl(fileLock);
+        return kind == 0 ? modelFile : kind == 1 ? pedalFile : irFile;
+    }
     juce::String modelWarning(bool isPedal = false) const   // ex. capture rééchantillonnée ; suit les changements de taux du projet
     {
         const auto& s = isPedal ? pedal : amp;
@@ -48,6 +58,9 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float> inPeak { 0.f }, outPeak { 0.f };   // crêtes lues (et remises à 0) par les vumètres
+    std::atomic<float> oscInPeak { 0.f }, oscOutPeak { 0.f };   // idem pour le serveur OSC
+    juce::CriticalSection fileLock;
+    std::atomic<int> loadSerial { 0 };   // incrémenté à chaque capture/IR chargée (l'interface se met à jour)
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
@@ -95,6 +108,7 @@ private:
     float lastEq[3] { 99.f, 99.f, 99.f };
     double sr = 48000.0;
     int maxBlock = 512;
+    std::unique_ptr<OscServer> osc;   // dernier membre : détruit en premier
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToneForgeProcessor)
 };

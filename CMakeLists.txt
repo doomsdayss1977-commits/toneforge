@@ -75,6 +75,7 @@ target_link_libraries(ToneForge
     PRIVATE
         juce::juce_audio_utils
         juce::juce_dsp
+        juce::juce_osc
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags)

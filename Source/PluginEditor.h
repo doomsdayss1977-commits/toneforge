@@ -114,6 +114,7 @@ private:
     juce::Image grain, bgCache;   // texture tolex ; décor statique pré-rendu (refait au changement de bloc)
     float levelIn = 0.f, levelOut = 0.f, needleIn = -60.f, needleOut = -60.f;   // aiguilles VU en dB
     int ticks = 0;
+    int seenLoad = -1;
     bool dirty = false;   // réglages à sauvegarder
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToneForgeEditor)

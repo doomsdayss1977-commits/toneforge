@@ -223,6 +223,9 @@ Skin skinFor(const juce::String& b)
 }
 } // namespace
 
+juce::File libraryRoot() { return kRoot; }
+juce::String captureBrand(const juce::String& s, bool pedal) { return brandOf(s, pedal); }
+
 //==============================================================================
 TfLook::TfLook()
 {
@@ -854,6 +857,17 @@ void ToneForgeEditor::timerCallback()
     needleIn += (juce::Decibels::gainToDecibels(levelIn, -60.f) - needleIn) * 0.3f;
     needleOut += (juce::Decibels::gainToDecibels(levelOut, -60.f) - needleOut) * 0.3f;
     repaint(meterIn.getUnion(meterOut).expanded(2));
+
+    // Capture/IR chargée d'ailleurs (OSC, état restauré) : affichage à jour
+    if (const int ls = proc.loadSerial.load(); ls != seenLoad)
+    {
+        seenLoad = ls;
+        dirty = true;
+        refreshLabels();
+        list.repaint();
+        for (auto& b : blocks)
+            b->repaint();
+    }
 
     // Toutes les 2 s : LED à jour et réglages sauvegardés s'ils ont changé (l'appli autonome ne sauve sinon qu'à la fermeture).
     if (++ticks % 60 == 0)

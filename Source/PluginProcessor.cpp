@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "OscServer.h"
 #include "NAM/get_dsp.h"
 
 // Les tampons internes font maxBlock : un bloc plus long est traité par tranches.
@@ -33,7 +34,11 @@ ToneForgeProcessor::ToneForgeProcessor()
     lastOn.assign(fx.size(), 0);
     timerCallback();
     startTimer(250);
+    if (wrapperType == wrapperType_Standalone)   // un seul serveur : pas d'instance de scan ni de doublon dans l'hôte
+        osc = std::make_unique<OscServer>(*this);
 }
+
+ToneForgeProcessor::~ToneForgeProcessor() = default;
 
 void ToneForgeProcessor::timerCallback()
 {
@@ -153,7 +158,9 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const int n = buffer.getNumSamples();
     auto v = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
     auto peak = [](std::atomic<float>& a, float m) { if (m > a.load()) a.store(m); };
-    peak(inPeak, buffer.getMagnitude(0, 0, n));
+    const float inMag = buffer.getMagnitude(0, 0, n);
+    peak(inPeak, inMag);
+    peak(oscInPeak, inMag);
 
     // Guitare = mono : on traite le canal 0, puis on recopie vers les autres.
     float* x = buffer.getWritePointer(0);
@@ -196,7 +203,9 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         buffer.copyFrom(ch, 0, buffer, ch % 2, 0, n);
 
     buffer.applyGain(juce::Decibels::decibelsToGain(v("output")));
-    peak(outPeak, buffer.getMagnitude(0, 0, n));
+    const float outMag = buffer.getMagnitude(0, 0, n);
+    peak(outPeak, outMag);
+    peak(oscOutPeak, outMag);
 }
 
 // Capture NAM d'un emplacement ; les gains ne s'appliquent que si une capture est chargée,
@@ -245,7 +254,11 @@ juce::String ToneForgeProcessor::loadModel(const juce::File& f, bool isPedal)
         std::swap(s.model, m);
         s.loaded = true;
     }
-    (isPedal ? pedalFile : modelFile) = f;
+    {
+        const juce::ScopedLock fl(fileLock);
+        (isPedal ? pedalFile : modelFile) = f;
+    }
+    ++loadSerial;
     return {};   // l'ancien modèle est détruit ici, hors du verrou
 }
 
@@ -306,7 +319,11 @@ juce::String ToneForgeProcessor::loadIR(const juce::File& f)
     cab.loadImpulseResponse(f, juce::dsp::Convolution::Stereo::no, juce::dsp::Convolution::Trim::yes, 0,
                             juce::dsp::Convolution::Normalise::yes);
     irLoaded = true;
-    irFile = f;
+    {
+        const juce::ScopedLock fl(fileLock);
+        irFile = f;
+    }
+    ++loadSerial;
     return {};
 }
 
@@ -342,6 +359,7 @@ void ToneForgeProcessor::setStateInformation(const void* data, int size)
             pedal.captureRate = 0;
             pedal.loaded = false;
         }
+        const juce::ScopedLock fl(fileLock);
         pedalFile = juce::File();
     }
     if (ir.existsAsFile())
