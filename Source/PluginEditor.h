@@ -6,7 +6,7 @@ namespace tf
 {
 const juce::Colour bg { 0xff0f1115 }, panel { 0xff171a21 }, panel2 { 0xff1e222b }, line { 0xff2a2f3a },
     txt { 0xffe6e8ec }, dim { 0xff8a91a0 }, acc { 0xffff8a3d }, acc2 { 0xff3dd6ff }, ok { 0xff3ddc84 },
-    warn { 0xffffcc3d }, bad { 0xffff4d5e };
+    warn { 0xffffcc3d }, bad { 0xffff4d5e }, ink { 0xff1c1d20 }, cream { 0xfff1e6c8 }, amber { 0xffffb347 };
 }
 
 class TfLook : public juce::LookAndFeel_V4
@@ -16,6 +16,8 @@ public:
     void drawRotarySlider(juce::Graphics&, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider&) override;
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool hover, bool down) override;
     void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool hover, bool down) override;
+    void fillTextEditorBackground(juce::Graphics&, int w, int h, juce::TextEditor&) override;
+    void drawTextEditorOutline(juce::Graphics&, int w, int h, juce::TextEditor&) override;
 };
 
 class ToneForgeEditor : public juce::AudioProcessorEditor, private juce::ListBoxModel, private juce::Timer,
@@ -38,7 +40,7 @@ private:
     {
         ToneForgeEditor& ed;
         int index;
-        Block(ToneForgeEditor& e, int i) : ed(e), index(i) {}
+        Block(ToneForgeEditor& e, int i) : ed(e), index(i) { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
         void paint(juce::Graphics&) override;
         void mouseUp(const juce::MouseEvent&) override;
     };
@@ -51,7 +53,7 @@ private:
     struct Entry
     {
         juce::File file;
-        juce::String group, name;
+        juce::String group, name, brand;   // fichier vide = en-tête de marque dans la liste
     };
 
     // Navigateur de captures (ListBoxModel)
@@ -69,6 +71,7 @@ private:
     void load(const juce::File&, bool isModel);
     void pick();
     void refreshLabels();
+    void renderBackground();
 
     ToneForgeProcessor& proc;
     TfLook look;
@@ -88,8 +91,9 @@ private:
     std::vector<std::unique_ptr<Knob>> knobs;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> topBar, chainArea, panelArea, meterIn, meterOut;
-    float levelIn = 0.f, levelOut = 0.f;
+    juce::Rectangle<int> topBar, chainArea, panelArea, plateArea, grilleArea, lcdArea, meterIn, meterOut;
+    juce::Image grain, bgCache;   // texture tolex ; décor statique pré-rendu (refait au changement de bloc)
+    float levelIn = 0.f, levelOut = 0.f, needleIn = -60.f, needleOut = -60.f;   // aiguilles VU en dB
     int ticks = 0;
     bool dirty = false;   // réglages à sauvegarder
 
