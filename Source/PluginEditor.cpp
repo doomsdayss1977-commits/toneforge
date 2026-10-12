@@ -13,7 +13,14 @@ static juce::File findLibRoot()
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("ToneForge");
 }
 static const juce::File kRoot = findLibRoot();
-static juce::String u8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
+// Majuscules sans dépendre de la locale (towupper laisse « é » en minuscule) : Latin-1 compris.
+static juce::String upper(const juce::String& s)
+{
+    juce::String r;
+    for (auto c : s)
+        r += (c >= 0xe0 && c <= 0xfe && c != 0xf7) ? (juce::juce_wchar) (c - 0x20) : juce::CharacterFunctions::toUpperCase(c);
+    return r;
+}
 
 //==============================================================================
 // Habillage « matériel » : textures et pièces dessinées en vectoriel.
@@ -129,8 +136,16 @@ Colour pedalColour(int i)
 }
 
 // Marque d'une capture d'après son dossier et son nom (modèles connus compris).
-juce::String brandOf(const juce::String& s)
+// Pédales : règles à part, consultées en premier et seulement pour les pédales
+// (sinon « 5150 + TS9 » ou « into Klon » classeraient un ampli chez un fabricant de pédales).
+juce::String brandOf(const juce::String& s, bool pedal = false)
 {
+    // Behringer avant Klon : « Behringer Centaur Overdrive KLON »
+    static const std::pair<const char*, const char*> pedalRules[] = {
+        { "Tech21", "Tech 21" }, { "B7K", "Darkglass" }, { "Behringer", "Behringer" }, { "TS9", "Ibanez" },
+        { "TS808", "Ibanez" }, { "Tube Screamer", "Ibanez" }, { "Klon", "Klon" }, { "Centaur", "Klon" },
+        { "EHX", "Electro-Harmonix" }, { "Electro-Harmonix", "Electro-Harmonix" }, { "Big Muff", "Electro-Harmonix" },
+        { "ProCo", "ProCo" }, { "Pro Co", "ProCo" }, { "RAT", "ProCo" }, { "Wampler", "Wampler" } };
     static const std::pair<const char*, const char*> rules[] = {
         { "Gallien", "Gallien-Krueger" }, { "GK", "Gallien-Krueger" }, { "Ampeg", "Ampeg" }, { "SVT", "Ampeg" },
         { "Portaflex", "Ampeg" }, { "B15", "Ampeg" }, { "B-15", "Ampeg" }, { "B18", "Ampeg" }, { "Marshall", "Marshall" },
@@ -146,12 +161,7 @@ juce::String brandOf(const juce::String& s)
         { "Suhr", "Suhr" }, { "Splawn", "Splawn" }, { "Randall", "Randall" }, { "Blackstar", "Blackstar" },
         { "Celestion", "Celestion" }, { "Greenback", "Celestion" }, { "V30", "Celestion" }, { "Vintage 30", "Celestion" },
         { "Jensen", "Jensen" }, { "Eminence", "Eminence" }, { "OwnHammer", "OwnHammer" }, { "York Audio", "York Audio" },
-        { "ML Sound", "ML Sound Lab" }, { "Bergantino", "Bergantino" }, { "Boss", "Boss" }, { "Ibanez", "Ibanez" },
-        // Pédales (Behringer avant Klon : « Behringer Centaur Overdrive KLON »)
-        { "Tech21", "Tech 21" }, { "B7K", "Darkglass" }, { "Behringer", "Behringer" }, { "TS9", "Ibanez" },
-        { "TS808", "Ibanez" }, { "Tube Screamer", "Ibanez" }, { "Klon", "Klon" }, { "Centaur", "Klon" },
-        { "EHX", "Electro-Harmonix" }, { "Electro-Harmonix", "Electro-Harmonix" }, { "Big Muff", "Electro-Harmonix" },
-        { "ProCo", "ProCo" }, { "Pro Co", "ProCo" }, { "RAT", "ProCo" }, { "Wampler", "Wampler" } };
+        { "ML Sound", "ML Sound Lab" }, { "Bergantino", "Bergantino" }, { "Boss", "Boss" }, { "Ibanez", "Ibanez" } };
     // Mot entier : pas de lettre juste avant, ni juste après un mot-clé finissant par une lettre
     // (JCM800, B15N acceptés ; Twins, Bossa refusés).
     auto hasWord = [&s](const juce::String& w)
@@ -166,6 +176,10 @@ juce::String brandOf(const juce::String& s)
         }
         return false;
     };
+    if (pedal)
+        for (const auto& [needle, brand] : pedalRules)
+            if (hasWord(needle))
+                return brand;
     for (const auto& [needle, brand] : rules)
         if (hasWord(needle))
             return brand;
@@ -312,6 +326,12 @@ void TfLook::drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bo
     g.drawText(on ? juce::String("EN MARCHE") : u8("COUPÉ"), b.getLocalBounds().withTrimmedLeft(48), juce::Justification::centredLeft);
 }
 
+// Onglets de bibliothèque : une police commune qui loge « Pédales (77) », au lieu d'un rétrécissement au cas par cas.
+juce::Font TfLook::getTextButtonFont(juce::TextButton& b, int h)
+{
+    return b.getProperties()["tab"] ? juce::Font(juce::FontOptions(11.5f)) : LookAndFeel_V4::getTextButtonFont(b, h);
+}
+
 void TfLook::drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down)
 {
     using juce::Colour;
@@ -394,6 +414,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     for (auto* b : { &ampTab, &pedTab, &cabTab })
     {
         b->setClickingTogglesState(false);
+        b->getProperties().set("tab", true);
         addAndMakeVisible(b);
     }
     ampTab.onClick = [this] { setTab(0); };
@@ -472,13 +493,13 @@ ToneForgeEditor::~ToneForgeEditor()
 //==============================================================================
 void ToneForgeEditor::scanLibrary()
 {
-    auto scan = [](const char* sub, const char* pattern)
+    auto scan = [](const char* sub, const char* pattern, bool pedal = false)
     {
         juce::Array<Entry> out;
         for (const auto& f : kRoot.getChildFile(sub).findChildFiles(juce::File::findFiles, true, pattern))
         {
             const auto grp = f.getParentDirectory().getFileName(), nm = f.getFileNameWithoutExtension();
-            out.add({ f, grp, nm, brandOf(grp + " " + nm) });
+            out.add({ f, grp, nm, brandOf(grp + " " + nm, pedal) });
         }
         // Par marque (« Autres » en dernier), puis par dossier et nom
         std::sort(out.begin(), out.end(), [](const Entry& a, const Entry& b)
@@ -493,7 +514,7 @@ void ToneForgeEditor::scanLibrary()
         return out;
     };
     models = scan("models", "*.nam");
-    pedals = scan("pedals", "*.nam");
+    pedals = scan("pedals", "*.nam", true);
     irs = scan("irs", "*.wav");
     rebuildBrands();
 }
@@ -582,7 +603,7 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
         const auto t = juce::Rectangle<int>(6, h - 24, w - 12, 20);
         g.setColour(bc);
         g.setFont(juce::FontOptions(12.f, juce::Font::bold));
-        g.drawText(e.name.toUpperCase(), t, juce::Justification::centredLeft, true);
+        g.drawText(upper(e.name), t, juce::Justification::centredLeft, true);
         g.setColour(bc.withAlpha(0.35f));
         g.fillRect(t.getX(), t.getBottom() - 1, t.getWidth(), 1);
         return;
@@ -608,7 +629,7 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
     g.drawEllipse(badge, 1.f);
     g.setColour(bc.getPerceivedBrightness() > 0.6f ? tf::ink : juce::Colours::white);
     g.setFont(juce::FontOptions(11.f, juce::Font::bold));
-    g.drawText(e.brand.substring(0, 2).toUpperCase(), badge.toNearestInt(), juce::Justification::centred);
+    g.drawText(upper(e.brand.substring(0, 2)), badge.toNearestInt(), juce::Justification::centred);
 
     auto t = r.withTrimmedLeft(44.f).reduced(4.f, 4.f).toNearestInt();
     if (isCurrent)
@@ -713,7 +734,7 @@ void ToneForgeEditor::selectBlock(int i)
     if (i == kAmp || i == kPedal || i == kCab)   // la liste suit le bloc NAM / IR affiché
         setTab(i == kAmp ? 0 : i == kPedal ? 1 : 2);
     const auto& d = defs.getReference(i);
-    panelTitle.setText(d.title.toUpperCase().replace(u8("é"), u8("É")), juce::dontSendNotification);
+    panelTitle.setText(upper(d.title), juce::dontSendNotification);
     bypassAtt.reset();
     bypass.setVisible(d.onId.isNotEmpty());
     if (d.onId.isNotEmpty())
@@ -790,7 +811,7 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
     led(g, juce::Rectangle<float>(9.f, 9.f).withCentre({ r.getCentreX(), r.getY() + 12.f }), Colour(0xffff3b30), on);
     g.setColour(ink.withMultipliedAlpha(0.65f));
     g.setFont(juce::FontOptions(9.f, juce::Font::bold));
-    g.drawText(d.kind.toUpperCase(), r.withTrimmedTop(21.f).withHeight(12.f).toNearestInt(), juce::Justification::centred, true);
+    g.drawText(upper(d.kind), r.withTrimmedTop(21.f).withHeight(12.f).toNearestInt(), juce::Justification::centred, true);
     g.setColour(ink);
     g.setFont(juce::FontOptions(15.f, juce::Font::bold));
     g.drawText(d.title, r.withTrimmedTop(33.f).withHeight(22.f).toNearestInt(), juce::Justification::centred, true);
@@ -971,7 +992,7 @@ void ToneForgeEditor::renderBackground()
     const auto logoArea = gr.withTrimmedBottom(40.f).toNearestInt();
     const bool brandLogo = selected == kAmp && brand.isNotEmpty() && brand != "Autres";
     const auto pedBrand = proc.pedalFile == juce::File() ? juce::String()
-                        : brandOf(proc.pedalFile.getParentDirectory().getFileName() + " " + proc.pedalFile.getFileNameWithoutExtension());
+                        : brandOf(proc.pedalFile.getParentDirectory().getFileName() + " " + proc.pedalFile.getFileNameWithoutExtension(), true);
     const auto text = brandLogo ? brand
                     : selected == kPedal && pedBrand.isNotEmpty() && pedBrand != "Autres" ? pedBrand : defs[selected].title;
     const auto lc = brandLogo ? sk.logo : Colour(0xfff4f1e8);
@@ -1178,15 +1199,23 @@ void ToneForgeEditor::askAi()
                    << " (actuel " << juce::String(proc.apvts.getRawParameterValue(d.ids[k])->load(), 2) << ")\n";
         }
     }
-    juce::String biblio = "Captures d'ampli NAM :\n";
-    for (int i = 0; i < models.size(); ++i)
-        biblio << "M" << i << " : " << models[i].brand << " | " << models[i].group << " | " << models[i].name << "\n";
-    biblio << u8("\nCaptures de pédale NAM (avant l'ampli) :\n");
-    for (int i = 0; i < pedals.size(); ++i)
-        biblio << "P" << i << " : " << pedals[i].brand << " | " << pedals[i].group << " | " << pedals[i].name << "\n";
-    biblio << "\nIR de baffle :\n";
-    for (int i = 0; i < irs.size(); ++i)
-        biblio << "I" << i << " : " << irs[i].brand << " | " << irs[i].group << " | " << irs[i].name << "\n";
+    // Une ligne d'en-tête par marque | dossier, puis « id nom » : beaucoup moins de jetons par requête.
+    juce::String biblio;
+    auto add = [&biblio](const juce::String& title, const char* prefix, const juce::Array<Entry>& src)
+    {
+        biblio << title;
+        juce::String last;
+        for (int i = 0; i < src.size(); ++i)
+        {
+            const auto head = src[i].brand + " | " + src[i].group;
+            if (head != last)
+                biblio << "# " << (last = head) << "\n";
+            biblio << prefix << i << " " << src[i].name << "\n";
+        }
+    };
+    add("Captures d'ampli NAM (# marque | dossier) :\n", "M", models);
+    add(u8("\nCaptures de pédale NAM (avant l'ampli) :\n"), "P", pedals);
+    add("\nIR de baffle :\n", "I", irs);
 
     const auto system = u8(
         "Tu es un ingénieur du son expert en amplis guitare et basse. Le musicien décrit un son (groupe, album, style "

@@ -4,6 +4,8 @@
 #include "NAM/dsp.h"
 #include "Effects.h"
 
+inline juce::String u8(const char* s) { return juce::String(juce::CharPointer_UTF8(s)); }
+
 // Chaîne : gate -> compresseur -> pédale NAM -> gain d'entrée -> ampli NAM -> IR -> EQ 3 bandes -> chorus -> delay -> reverb -> volume
 class ToneForgeProcessor : public juce::AudioProcessor, private juce::Timer
 {
@@ -68,6 +70,7 @@ private:
         std::vector<float> in, out;
         Resampler rs;
         std::atomic<int> captureRate { 0 }, projectRate { 0 };   // capture rééchantillonnée (0 = non), lus par l'interface
+        std::atomic<bool> loaded { false };   // une capture est chargée (lu sans verrou par le thread audio)
     } pedal, amp;
     void configureModel(nam::DSP&, NamSlot&);
     void processResampled(NamSlot&, float* x, int n);

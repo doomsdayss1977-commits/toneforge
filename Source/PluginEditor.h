@@ -17,6 +17,7 @@ public:
     void drawRotarySlider(juce::Graphics&, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider&) override;
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool hover, bool down) override;
     void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool hover, bool down) override;
+    juce::Font getTextButtonFont(juce::TextButton&, int h) override;
     void fillTextEditorBackground(juce::Graphics&, int w, int h, juce::TextEditor&) override;
     void drawTextEditorOutline(juce::Graphics&, int w, int h, juce::TextEditor&) override;
 };
@@ -90,7 +91,7 @@ private:
     int selected = kAmp;
 
     juce::TextEditor search;
-    juce::TextButton ampTab { "Amplis" }, pedTab { juce::CharPointer_UTF8("Pédales") }, cabTab { "Baffles" }, rescanBtn { "Actualiser" }, fileBtn { "Fichier..." };
+    juce::TextButton ampTab { "Amplis" }, pedTab { u8("Pédales") }, cabTab { "Baffles" }, rescanBtn { "Actualiser" }, fileBtn { "Fichier..." };
     juce::Label countLbl, nameLbl, warnLbl, panelTitle, panelInfo;
     juce::ListBox list { "captures", this };
     juce::Array<Entry> models, pedals, irs, shown;
