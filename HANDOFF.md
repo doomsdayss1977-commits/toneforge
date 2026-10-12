@@ -5,7 +5,8 @@
 
 ## État actuel
 - Fait et validé par l'utilisateur : son NAM, chaîne Airwindows, 29 IR de baffle + interrupteur, nouvelle UI + sauvegarde des réglages, revue de code corrigée (f848594), VST3 fonctionnel dans REAPER.
-- Fait, **pas encore écouté** : rééchantillonnage autour de NAM quand projet ≠ taux de la capture (98e4856). VST3 installé à jour (17:43:58).
+- Fait et validé à l'écoute (2026-10-11, bandeau OK, pas de craquements) : rééchantillonnage autour de NAM quand projet ≠ taux de la capture (98e4856) + correctifs de revue (4663dc9 : bandeau suit le taux, config sous verrou, taux arrondi). VST3 installé à jour (18:51:03).
+- Revue 98e4856, points laissés de côté : pas de filtre anti-repliement (Lagrange), latence non déclarée (setLatencySamples), amorce de 12 trop courte si ratio > 2,3, double chemin NAM.
 - Fichiers clés :
   - `Source/PluginProcessor.cpp/.h` — chaîne gate → comp → entrée → NAM (rééchantillonné si besoin) → IR → EQ → chorus/delay/reverb → sortie ; état = paramètres + chemins model/ir
   - `Source/PluginEditor.cpp/.h` — UI (blocs à LED, navigateur captures/IR, vumètres), sauvegarde auto si changement
@@ -30,4 +31,4 @@
 
 ## Prochaines étapes
 1. Faire écouter le rééchantillonnage : projet REAPER à 44,1 kHz, vérifier le bandeau « Capture à 48000 Hz, rééchantillonnée depuis 44100 Hz » et l'absence de craquements.
-2. Proposer `/code-review` sur 98e4856.
+2. Selon l'écoute : filtre anti-repliement / latence déclarée.
