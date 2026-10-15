@@ -82,6 +82,12 @@ private:
     void renderBackground();
     void askAi();
     void applyAi(const juce::String& reply, const juce::String& err);
+    // Réglages par bloc (copier/coller, presets .tfb) et tap tempo du delay
+    juce::String blockKey(int i) const;
+    juce::ValueTree captureBlock(int i) const;
+    void applyBlock(int i, const juce::ValueTree&);
+    void blockMenu(int i);
+    void tap();
 
     ToneForgeProcessor& proc;
     TfLook look;
@@ -103,6 +109,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt;
     std::vector<std::unique_ptr<Knob>> knobs;
     std::unique_ptr<juce::FileChooser> chooser;
+    juce::TextButton presetBtn { u8("Réglages ▾") }, tapBtn { "Tap" };
+    juce::ValueTree clip;          // réglages copiés (type = clé du bloc)
+    juce::Array<double> taps;      // instants des derniers coups de Tap (ms)
 
     // Mode « Son IA » : demande en texte libre -> capture, IR et réglages choisis par OpenRouter
     juce::TextButton aiBtn, aiGo, aiClose { "Fermer" };

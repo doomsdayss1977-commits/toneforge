@@ -223,6 +223,21 @@ Skin skinFor(const juce::String& b)
 }
 } // namespace
 
+// TapeDelay2 : la bande (88 200 cases) avance de A^4*25+1 cases par cycle, un cycle = floor(sr/44100) échantillons
+// (1 à 4) ; l'écho revient après un tour complet. Le flutter par défaut (0,1) y change moins de 0,01 %.
+static int tapeCycle(double sr) { return juce::jlimit(1, 4, (int) std::floor(sr / 44100.0)); }
+static double delayMs(double a, double sr)
+{
+    sr = sr > 0 ? sr : 48000.0;
+    return 88200.0 * tapeCycle(sr) * 1000.0 / (sr * (std::pow(a, 4.0) * 25.0 + 1.0));
+}
+static double delayNorm(double ms, double sr)
+{
+    sr = sr > 0 ? sr : 48000.0;
+    const double speed = 88200.0 * tapeCycle(sr) * 1000.0 / (sr * juce::jmax(1.0, ms));
+    return std::pow(juce::jlimit(0.0, 1.0, (speed - 1.0) / 25.0), 0.25);
+}
+
 juce::File libraryRoot() { return kRoot; }
 juce::String captureBrand(const juce::String& s, bool pedal) { return brandOf(s, pedal); }
 
@@ -451,6 +466,10 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
         addAndMakeVisible(l);
     bypass.setButtonText("Actif");
     addChildComponent(bypass);
+    presetBtn.onClick = [this] { blockMenu(selected); };
+    tapBtn.onClick = [this] { tap(); };
+    addAndMakeVisible(presetBtn);
+    addChildComponent(tapBtn);
 
     // Son IA
     aiBtn.setButtonText(u8("✦ Son IA"));
@@ -761,6 +780,11 @@ void ToneForgeEditor::selectBlock(int i)
         kn->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, d.ids[k], kn->slider);
         const int dec = proc.apvts.getParameterRange(d.ids[k]).end <= 1.f ? 2 : 1;
         kn->slider.textFromValueFunction = [dec](double v) { return juce::String(v, dec); };
+        if (d.ids[k] == "delay_0")
+        {
+            kn->slider.textFromValueFunction = [this](double v) { return juce::String(juce::roundToInt(delayMs(v, proc.getSampleRate()))) + " ms"; };
+            kn->slider.valueFromTextFunction = [this](const juce::String& t) { return delayNorm(t.getDoubleValue(), proc.getSampleRate()); };
+        }
         kn->slider.updateText();
         addAndMakeVisible(kn->slider);
         addAndMakeVisible(kn->label);
@@ -837,6 +861,8 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
 
 void ToneForgeEditor::Block::mouseUp(const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+        return ed.blockMenu(index);
     // Interrupteur au pied ou LED = marche/arrêt ; ailleurs = afficher les réglages du bloc.
     const auto r = getLocalBounds().toFloat().reduced(5.f, 4.f);
     const bool onSwitch = e.position.getDistanceFrom({ r.getCentreX(), r.getBottom() - 22.f }) < 16.f
@@ -1145,6 +1171,9 @@ void ToneForgeEditor::resized()
     auto head = q.removeFromTop(30);
     panelTitle.setBounds(head.removeFromLeft(300));
     bypass.setBounds(head.removeFromRight(150));
+    presetBtn.setBounds(head.removeFromRight(110).reduced(0, 2));
+    head.removeFromRight(8);
+    tapBtn.setBounds(head.removeFromRight(90).reduced(0, 2));
     q.removeFromTop(4);
     const int kw = 110, kg = 18, n = (int) knobs.size();
     q = q.withSizeKeepingCentre(juce::jmax(0, n * kw + (n - 1) * kg), q.getHeight());
@@ -1166,6 +1195,8 @@ void ToneForgeEditor::resized()
     panelTitle.setVisible(!aiOpen);
     panelInfo.setVisible(!aiOpen);
     bypass.setVisible(!aiOpen && defs[selected].onId.isNotEmpty());
+    presetBtn.setVisible(!aiOpen);
+    tapBtn.setVisible(!aiOpen && blockKey(selected) == "delay");
     for (auto* c : { (juce::Component*) &aiPrompt, (juce::Component*) &aiGo, (juce::Component*) &aiClose, (juce::Component*) &aiOut })
     {
         c->setVisible(aiOpen);
@@ -1320,4 +1351,111 @@ void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err
     static const std::regex ids(R"(\s*\(\s*[MPI]\d+(\s*[,/]\s*[MPI]\d+)*\s*\))");
     const auto why = std::regex_replace(j["explication"].toString().toStdString(), ids, "");
     aiOut.setText(juce::String::fromUTF8(why.c_str()) + "\n\n" + recap);
+}
+
+//==============================================================================
+// Réglages par bloc, comme les « Model Preset » (.at5m) et Copier/Coller d'AmpliTube.
+juce::String ToneForgeEditor::blockKey(int i) const
+{
+    const auto& on = defs.getReference(i).onId;
+    return on.isNotEmpty() ? on.upToFirstOccurrenceOf("_", false, false) : i == kAmp ? juce::String("amp") : juce::String("eq");
+}
+
+static int kindOf(int block, int pedal, int amp, int cab) { return block == amp ? 0 : block == pedal ? 1 : block == cab ? 2 : -1; }
+
+juce::ValueTree ToneForgeEditor::captureBlock(int i) const
+{
+    const auto& d = defs.getReference(i);
+    juce::ValueTree v(blockKey(i));
+    auto ids = d.ids;
+    if (d.onId.isNotEmpty())
+        ids.add(d.onId);
+    for (auto& id : ids)
+        if (auto* p = proc.apvts.getParameter(id))
+            v.setProperty(juce::Identifier(id), p->convertFrom0to1(p->getValue()), nullptr);
+    const int kind = kindOf(i, kPedal, kAmp, kCab);
+    if (kind >= 0 && proc.loadedFile(kind) != juce::File())
+        v.setProperty("file", proc.loadedFile(kind).getFullPathName(), nullptr);
+    return v;
+}
+
+void ToneForgeEditor::applyBlock(int i, const juce::ValueTree& v)
+{
+    if (!v.hasType(juce::Identifier(blockKey(i))))
+        return;
+    const int kind = kindOf(i, kPedal, kAmp, kCab);
+    const juce::File f(v.getProperty("file").toString());
+    if (kind >= 0 && f.existsAsFile())
+        load(f, kind);   // d'abord la capture : charger une pédale l'allume
+    for (int k = 0; k < v.getNumProperties(); ++k)
+    {
+        const auto id = v.getPropertyName(k);
+        if (auto* p = proc.apvts.getParameter(id.toString()))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(p->convertTo0to1((float) v.getProperty(id)));
+            p->endChangeGesture();
+        }
+    }
+    dirty = true;
+    selectBlock(i);
+}
+
+void ToneForgeEditor::blockMenu(int i)
+{
+    const auto key = blockKey(i);
+    const auto dir = kRoot.getChildFile("blocks").getChildFile(key);
+    const auto files = dir.findChildFiles(juce::File::findFiles, false, "*.tfb", juce::File::FollowSymlinks::no);
+    juce::PopupMenu m, sub;
+    m.addSectionHeader(upper(defs[i].title));
+    m.addItem(u8("Copier les réglages"), [this, i] { clip = captureBlock(i); });
+    m.addItem(u8("Coller les réglages"), clip.hasType(juce::Identifier(key)), false, [this, i] { applyBlock(i, clip); });
+    m.addSeparator();
+    m.addItem(u8("Sauver comme preset de bloc..."), [this, i, dir]
+    {
+        auto* w = new juce::AlertWindow(u8("Preset de bloc"), u8("Nom du preset (") + defs[i].title + ")", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor("name", {});
+        w->addButton("Sauver", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        w->addButton("Annuler", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        w->enterModalState(true, juce::ModalCallbackFunction::create([this, i, dir, w](int r)
+        {
+            const auto name = juce::File::createLegalFileName(w->getTextEditorContents("name").trim());
+            if (r != 1 || name.isEmpty())
+                return;
+            dir.createDirectory();
+            if (auto xml = captureBlock(i).createXml())
+                if (!xml->writeTo(dir.getChildFile(name + ".tfb")))
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "ToneForge",
+                                                           u8("Écriture impossible : ") + dir.getFullPathName());
+        }), true);
+    });
+    for (auto& f : files)
+        sub.addItem(f.getFileNameWithoutExtension(), [this, i, f]
+        {
+            if (auto xml = juce::XmlDocument::parse(f))
+                applyBlock(i, juce::ValueTree::fromXml(*xml));
+        });
+    m.addSubMenu("Charger un preset", sub, !files.isEmpty());
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(blocks[(size_t) i].get()));
+}
+
+// Tap Tempo (modèle : MIDI.Tap_Tempo d'AmpliTube) : moyenne des 4 derniers intervalles -> temps du delay.
+void ToneForgeEditor::tap()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (!taps.isEmpty() && now - taps.getLast() > 2000.0)
+        taps.clear();
+    taps.add(now);
+    if (taps.size() > 5)
+        taps.remove(0);
+    if (taps.size() < 2)
+        return tapBtn.setButtonText("Tap...");
+    const double ms = (taps.getLast() - taps.getFirst()) / (taps.size() - 1);
+    if (auto* p = proc.apvts.getParameter("delay_0"))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost((float) delayNorm(ms, proc.getSampleRate()));
+        p->endChangeGesture();
+    }
+    tapBtn.setButtonText(juce::String(juce::roundToInt(60000.0 / ms)) + " BPM");
 }
