@@ -12,9 +12,12 @@ Fonctions inspirées d'AmpliTube 5 (vues en rétro-ingénierie, cf. `C:\dev\ampl
 - [x] Bouton « Tap » sur le bloc Delay : moyenne des derniers coups → « Temps » ; Temps affiché en ms
 - [x] Test : taper sur un métronome à 120 BPM → écho à 500 ms
 
-## À faire
 ### 2. Accordeur (modèle : emplacement 0 de la chaîne)
-- Détection de hauteur (YIN) sur l'entrée, note + écart en cents, sortie coupée pendant l'accordage
+- [x] Bouton « ♪ Accordeur » : son coupé, note + écart en cents + aiguille sur l'écran LCD (vert ±3 ¢)
+- [x] YIN sur l'entrée brute, 28-1400 Hz (si grave de basse 5 cordes) ; test synthétique : 30,87 / 41,2 / 110 Hz exacts, 988 Hz à +1,4 ¢
+- [x] Test avec la guitare et la basse (2026-10-14)
+
+## À faire
 
 ### 4. Amplis en parallèle A/B (modèle : ChainSlot Amp A/B/C + Cab A/B/C)
 - Deuxième capture NAM + IR en parallèle, mélange A/B ; attention CPU (×2)

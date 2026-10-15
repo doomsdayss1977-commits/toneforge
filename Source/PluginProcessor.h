@@ -62,6 +62,10 @@ public:
     juce::CriticalSection fileLock;
     std::atomic<int> loadSerial { 0 };   // incrémenté à chaque capture/IR chargée (l'interface se met à jour)
 
+    // Accordeur : pendant l'accordage la sortie est coupée et l'entrée brute (canal 0) va dans un anneau.
+    std::atomic<bool> tunerOn { false };
+    void readTuner(std::vector<float>& out, int n, int dec) const;   // n derniers points, moyennés par dec
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
     void updateEq();
@@ -107,6 +111,9 @@ private:
     void timerCallback() override;
     float lastEq[3] { 99.f, 99.f, 99.f };
     double sr = 48000.0;
+    static constexpr int kRing = 32768;
+    float ring[kRing] {};
+    std::atomic<int> ringPos { 0 };
     int maxBlock = 512;
     std::unique_ptr<OscServer> osc;   // dernier membre : détruit en premier
 

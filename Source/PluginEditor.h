@@ -1,6 +1,7 @@
 #pragma once
 #include "PluginProcessor.h"
 #include "AiTone.h"
+#include "Tuner.h"
 
 // Thème repris d'AmpliTube UI (palette sombre, accent orange / cyan).
 namespace tf
@@ -88,6 +89,8 @@ private:
     void applyBlock(int i, const juce::ValueTree&);
     void blockMenu(int i);
     void tap();
+    void showTuner(bool on);
+    void updateTuner();
 
     ToneForgeProcessor& proc;
     TfLook look;
@@ -112,6 +115,8 @@ private:
     juce::TextButton presetBtn { u8("Réglages ▾") }, tapBtn { "Tap" };
     juce::ValueTree clip;          // réglages copiés (type = clé du bloc)
     juce::Array<double> taps;      // instants des derniers coups de Tap (ms)
+    juce::TextButton tunerBtn { u8("♪ Accordeur") };
+    std::vector<float> tunerBuf;
 
     // Mode « Son IA » : demande en texte libre -> capture, IR et réglages choisis par OpenRouter
     juce::TextButton aiBtn, aiGo, aiClose { "Fermer" };

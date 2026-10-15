@@ -470,6 +470,9 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     tapBtn.onClick = [this] { tap(); };
     addAndMakeVisible(presetBtn);
     addChildComponent(tapBtn);
+    tunerBtn.setClickingTogglesState(false);
+    tunerBtn.onClick = [this] { showTuner(!proc.tunerOn); };
+    addAndMakeVisible(tunerBtn);
 
     // Son IA
     aiBtn.setButtonText(u8("✦ Son IA"));
@@ -510,6 +513,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
 ToneForgeEditor::~ToneForgeEditor()
 {
     aiJob.reset();   // coupe une requête IA en cours et attend son fil
+    proc.tunerOn = false;   // interface fermée : ne pas laisser le son coupé
     proc.apvts.state.removeListener(this);
     stopTimer();
     setLookAndFeel(nullptr);
@@ -906,6 +910,8 @@ void ToneForgeEditor::timerCallback()
             h->savePluginState();
        #endif
     }
+    if (proc.tunerOn && ticks % 3 == 0)   // 10 mesures par seconde
+        updateTuner();
 }
 
 // Décor statique pré-rendu : tolex, barre en métal brossé, écran LCD, câbles, façade d'ampli.
@@ -1112,6 +1118,7 @@ void ToneForgeEditor::resized()
         warnLbl.setBounds(l);
         aiBtn.setBounds(juce::Rectangle<int>(meterIn.getX() - lcdArea.getRight() - 48, 34)
                             .withCentre({ (lcdArea.getRight() + meterIn.getX()) / 2, topBar.getCentreY() }));
+        tunerBtn.setBounds(juce::Rectangle<int>(130, 34).withCentre({ lcdArea.getX() - 85, topBar.getCentreY() }));
     }
 
     auto side = r.removeFromLeft(260).reduced(12);
@@ -1458,4 +1465,53 @@ void ToneForgeEditor::tap()
         p->endChangeGesture();
     }
     tapBtn.setButtonText(juce::String(juce::roundToInt(60000.0 / ms)) + " BPM");
+}
+
+//==============================================================================
+// Accordeur (modèle : emplacement Tuner d'AmpliTube, avant toute la chaîne) : son coupé, note et écart sur l'écran LCD.
+void ToneForgeEditor::showTuner(bool on)
+{
+    proc.tunerOn = on;
+    tunerBtn.setToggleState(on, juce::dontSendNotification);
+    nameLbl.setColour(juce::Label::textColourId, tf::amber);
+    warnLbl.setColour(juce::Label::textColourId, tf::amber.withAlpha(0.75f));
+    if (on)
+    {
+        nameLbl.setText("--", juce::dontSendNotification);
+        warnLbl.setText(u8("Accordeur : son coupé"), juce::dontSendNotification);
+    }
+    else
+        refreshLabels();
+}
+
+void ToneForgeEditor::updateTuner()
+{
+    // Signal moyenné vers ~24 kHz : précis à ±1,5 cent jusqu'à 1 kHz, 4x moins de calcul qu'à 48 kHz.
+    const double rate = proc.getSampleRate() > 0 ? proc.getSampleRate() : 48000.0;
+    const int dec = juce::jmax(1, juce::roundToInt(rate / 24000.0));
+    const double sr = rate / dec;
+    proc.readTuner(tunerBuf, juce::jmin(1024 + (int) (sr / 28.0) + 2, 32768 / dec), dec);
+    const float f = yinPitch(tunerBuf, sr);
+    if (f <= 0.f)
+    {
+        nameLbl.setColour(juce::Label::textColourId, tf::amber.withAlpha(0.5f));
+        return;   // garde la dernière note affichée, estompée
+    }
+    static const char* names[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    const double midi = 69.0 + 12.0 * std::log2(f / 440.0);
+    const int note = juce::roundToInt(midi);
+    const int cents = juce::roundToInt((midi - note) * 100.0);
+    const bool inTune = std::abs(cents) <= 3;
+    nameLbl.setText(juce::String(names[((note % 12) + 12) % 12]) + juce::String(note / 12 - 1) + "   "
+                        + (cents > 0 ? "+" : "") + juce::String(cents) + u8(" ¢"),
+                    juce::dontSendNotification);
+    // Aiguille en texte : 21 cases de -50 à +50 cents
+    juce::String bar;
+    const int pos = juce::jlimit(0, 20, juce::roundToInt((cents + 50) / 5.0));
+    for (int i = 0; i <= 20; ++i)
+        bar << (i == pos ? u8("█") : i == 10 ? u8("|") : u8("·"));
+    warnLbl.setText(bar + "   " + juce::String(f, 1) + " Hz", juce::dontSendNotification);
+    const auto col = inTune ? tf::ok : std::abs(cents) <= 15 ? tf::warn : tf::bad;
+    nameLbl.setColour(juce::Label::textColourId, col);
+    warnLbl.setColour(juce::Label::textColourId, col.withAlpha(0.85f));
 }

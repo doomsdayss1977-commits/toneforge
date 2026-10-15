@@ -162,6 +162,17 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     peak(inPeak, inMag);
     peak(oscInPeak, inMag);
 
+    if (tunerOn)
+    {
+        const float* in = buffer.getReadPointer(0);
+        int w = ringPos.load(std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i)
+            ring[(w + i) & (kRing - 1)] = in[i];
+        ringPos.store((w + n) & (kRing - 1), std::memory_order_release);
+        buffer.clear();
+        return;
+    }
+
     // Guitare = mono : on traite le canal 0, puis on recopie vers les autres.
     float* x = buffer.getWritePointer(0);
     juce::dsp::AudioBlock<float> monoBlock(&x, 1, (size_t) n);
@@ -206,6 +217,20 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const float outMag = buffer.getMagnitude(0, 0, n);
     peak(outPeak, outMag);
     peak(oscOutPeak, outMag);
+}
+
+void ToneForgeProcessor::readTuner(std::vector<float>& out, int n, int dec) const
+{
+    // Lecture sans verrou : un bloc à demi écrit ne fausse qu'une mesure sur dix par seconde.
+    out.resize((size_t) n);
+    int r = ringPos.load(std::memory_order_acquire) - n * dec;
+    for (int i = 0; i < n; ++i)
+    {
+        float s = 0.f;
+        for (int k = 0; k < dec; ++k)
+            s += ring[(r++) & (kRing - 1)];
+        out[(size_t) i] = s / (float) dec;
+    }
 }
 
 // Capture NAM d'un emplacement ; les gains ne s'appliquent que si une capture est chargée,
