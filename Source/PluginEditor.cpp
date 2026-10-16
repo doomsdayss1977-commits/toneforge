@@ -941,31 +941,34 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
     using juce::Colour;
     namespace Colours = juce::Colours;
     const auto& d = ed.defs.getReference(index);
-    const bool on = ed.blockOn(index), sel = ed.selected == index;
-    const auto col = pedalColour(index);
-    const auto r = getLocalBounds().toFloat().reduced(5.f, 4.f);
+    const bool on = onA > 0.5f;
+    const auto col = pedalColour(index).brighter(0.12f * hov);
+    const auto r = getLocalBounds().toFloat().reduced(5.f, 4.f).translated(0.f, -2.f * hov + 1.f);   // se soulève au survol
 
-    if (sel)
+    for (int i = 1; i <= 3; ++i)   // ombre douce, plus étalée quand le bloc est soulevé
+    {
+        g.setColour(Colours::black.withAlpha(0.16f));
+        g.fillRoundedRectangle(r.translated(0.f, 2.f + 1.5f * hov).expanded((float) i * (0.8f + hov * 0.6f)), 12.f + (float) i);
+    }
+    if (selA > 0.f)
         for (int i = 1; i <= 3; ++i)
         {
-            g.setColour(tf::acc.withAlpha(0.14f * (float) (4 - i)));
-            g.drawRoundedRectangle(r.expanded((float) i), 9.f + (float) i, 2.f);
+            g.setColour(tf::acc.withAlpha(0.16f * (float) (4 - i) * selA));
+            g.drawRoundedRectangle(r.expanded((float) i), 12.f + (float) i, 2.f);
         }
-    g.setColour(Colours::black.withAlpha(0.5f));
-    g.fillRoundedRectangle(r.translated(0.f, 3.f), 9.f);
     juce::Path body;
-    body.addRoundedRectangle(r, 9.f);
+    body.addRoundedRectangle(r, 12.f);
     g.setGradientFill(juce::ColourGradient(col.brighter(0.25f), 0, r.getY(), col.darker(0.45f), 0, r.getBottom(), false));
     g.fillPath(body);
     if (index == kAmp)   // ampli : tolex noir à liseré or
     {
         textured(g, body, col, ed.grain);
         g.setColour(Colour(0xffc9a65a));
-        g.drawRoundedRectangle(r.reduced(3.f), 7.f, 1.2f);
+        g.drawRoundedRectangle(r.reduced(3.f), 10.f, 1.2f);
     }
-    if (!on)
+    if (onA < 1.f)
     {
-        g.setColour(Colours::black.withAlpha(0.38f));
+        g.setColour(Colours::black.withAlpha(0.38f * (1.f - onA)));
         g.fillPath(body);
     }
     g.setColour(Colours::white.withAlpha(0.22f));
@@ -976,7 +979,7 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
                      r.getBottomLeft().translated(7.f, -7.f), r.getBottomRight().translated(-7.f, -7.f) })
         screw(g, pt, 2.3f);
 
-    const auto ink = (col.getPerceivedBrightness() > 0.6f ? tf::ink : Colours::white).withAlpha(on ? 1.f : 0.55f);
+    const auto ink = (col.getPerceivedBrightness() > 0.6f ? tf::ink : Colours::white).withAlpha(0.55f + 0.45f * onA);
     led(g, juce::Rectangle<float>(9.f, 9.f).withCentre({ r.getCentreX(), r.getY() + 12.f }), Colour(0xffff3b30), on);
     g.setColour(ink.withMultipliedAlpha(0.65f));
     g.setFont(juce::FontOptions(9.f, juce::Font::bold));
@@ -1048,9 +1051,35 @@ void ToneForgeEditor::timerCallback()
     }
     if (proc.tunerOn && ticks % 3 == 0)   // 10 mesures par seconde
         updateTuner();
+
+    // Animations de la chaîne (~150 ms à 30 Hz) et impulsion du câble (un passage par 1,2 s)
+    auto ease = [](float& v, bool to)
+    {
+        const float o = v;
+        v = juce::jlimit(0.f, 1.f, v + (to ? 0.22f : -0.22f));
+        return v != o;
+    };
+    for (auto& b : blocks)
+    {
+        bool ch = ease(b->hov, b->isMouseOver(true));
+        ch |= ease(b->selA, selected == b->index);
+        ch |= ease(b->onA, blockOn(b->index));
+        if (ch)
+            b->repaint();
+    }
+    pulse = std::fmod(pulse + 1.f / 36.f, 1.f);
+    repaint(cableStrip());
 }
 
-// Décor statique pré-rendu : tolex, barre en métal brossé, écran LCD, câbles, façade d'ampli.
+juce::Rectangle<int> ToneForgeEditor::cableStrip() const
+{
+    if (blocks.empty())
+        return {};
+    const auto a = blocks.front()->getBounds();
+    return { chainArea.getX(), a.getY() + juce::roundToInt(a.getHeight() * 0.42f) - 8, chainArea.getWidth(), 16 };
+}
+
+// Décor statique pré-rendu : tolex, barre en métal brossé, écran LCD, façade d'ampli (le câble est dessiné dans paint).
 void ToneForgeEditor::renderBackground()
 {
     using juce::Colour;
@@ -1106,27 +1135,6 @@ void ToneForgeEditor::renderBackground()
     g.drawVerticalLine(260, (float) topBar.getBottom(), (float) getHeight());
     g.setColour(Colours::white.withAlpha(0.05f));
     g.drawVerticalLine(261, (float) topBar.getBottom(), (float) getHeight());
-
-    // Câbles jack entre les pédales
-    for (size_t i = 0; i + 1 < blocks.size(); ++i)
-    {
-        const auto a = blocks[i]->getBounds().toFloat(), b = blocks[i + 1]->getBounds().toFloat();
-        const float y = a.getY() + a.getHeight() * 0.42f;
-        const juce::Point<float> p0(a.getRight() - 4.f, y), p1(b.getX() + 4.f, y);
-        juce::Path cable;
-        cable.startNewSubPath(p0);
-        cable.cubicTo(p0.translated(8.f, 22.f), p1.translated(-8.f, 22.f), p1);
-        g.setColour(Colour(0xff0a0a0a));
-        g.strokePath(cable, juce::PathStrokeType(4.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        g.setColour(Colours::white.withAlpha(0.12f));
-        g.strokePath(cable, juce::PathStrokeType(1.f), juce::AffineTransform::translation(0.f, -1.f));
-        for (auto pt : { p0, p1 })
-        {
-            const auto j = juce::Rectangle<float>(7.f, 9.f).withCentre(pt);
-            g.setGradientFill(juce::ColourGradient(Colour(0xffe8eaed), j.getX(), j.getY(), Colour(0xff5c6168), j.getX(), j.getBottom(), false));
-            g.fillRoundedRectangle(j, 1.5f);
-        }
-    }
 
     // Façade d'ampli habillée selon la marque de la capture : tolex, liseré, plaque, grille, logo
     const auto brand = proc.modelFile == juce::File() ? juce::String()
@@ -1196,6 +1204,24 @@ void ToneForgeEditor::paint(juce::Graphics& g)
         g.drawImageAt(bgCache, 0, 0);
     else
         g.fillAll(tf::bg);
+
+    // Câble lumineux entre les blocs : une vague parcourt la chaîne, plus vive quand le signal est fort.
+    {
+        const float k = juce::jlimit(0.25f, 1.f, 0.25f + levelOut * 3.f);
+        const float wave = (float) chainArea.getX() + pulse * (float) chainArea.getWidth();
+        for (size_t i = 0; i + 1 < blocks.size(); ++i)
+        {
+            const auto a = blocks[i]->getBounds().toFloat(), b = blocks[i + 1]->getBounds().toFloat();
+            const float y = a.getY() + a.getHeight() * 0.42f, x0 = a.getRight() - 6.f, x1 = b.getX() + 6.f;
+            const float d = ((x0 + x1) * 0.5f - wave) / 70.f, hot = k * (0.35f + 0.65f * std::exp(-d * d));
+            g.setColour(tf::acc2.withAlpha(0.18f * hot));
+            g.fillRoundedRectangle({ x0, y - 5.f, x1 - x0, 10.f }, 5.f);
+            g.setColour(tf::acc2.withAlpha(0.3f + 0.7f * hot));
+            g.fillRoundedRectangle({ x0, y - 1.25f, x1 - x0, 2.5f }, 1.25f);
+            g.setColour(juce::Colours::white.withAlpha(0.6f * hot * std::exp(-d * d)));
+            g.fillRoundedRectangle({ x0, y - 0.5f, x1 - x0, 1.f }, 0.5f);
+        }
+    }
 
     // VU-mètres à aiguille (-30 à +3 dB, zone rouge au-dessus de 0)
     auto vu = [&g](juce::Rectangle<int> box, float db, const char* lbl)

@@ -44,6 +44,7 @@ private:
     {
         ToneForgeEditor& ed;
         int index;
+        float hov = 0.f, selA = 0.f, onA = 1.f;   // animations (~150 ms) : survol, sélection, marche
         Block(ToneForgeEditor& e, int i) : ed(e), index(i) { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
         void paint(juce::Graphics&) override;
         void mouseUp(const juce::MouseEvent&) override;
@@ -152,6 +153,8 @@ private:
     juce::Image grain, bgCache;   // texture tolex ; décor statique pré-rendu (refait au changement de bloc)
     float levelIn = 0.f, levelOut = 0.f, needleIn = -60.f, needleOut = -60.f;   // aiguilles VU en dB
     int ticks = 0;
+    float pulse = 0.f;   // position (0-1) de l'impulsion qui parcourt le câble de la chaîne
+    juce::Rectangle<int> cableStrip() const;
     int seenLoad = -1;
     bool dirty = false;   // réglages à sauvegarder
 
