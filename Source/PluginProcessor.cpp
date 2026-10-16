@@ -101,6 +101,10 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     for (auto& e : fx)
         e->setSampleRate((float) sampleRate);
     bufB.assign((size_t) samplesPerBlock, 0.f);
+    loopBuf.setSize(2, (int) (sampleRate * 60.0));
+    loopBuf.clear();
+    loopState = loopEmpty;
+    loopLen = loopPos = 0;
     for (auto* s : { &pedal, &amp, &ampB })
     {
         const juce::SpinLock::ScopedLockType sl(s->lock);
@@ -247,6 +251,7 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         buffer.copyFrom(ch, 0, buffer, ch % 2, 0, n);
 
     buffer.applyGain(juce::Decibels::decibelsToGain(v("output")));
+    runLooper(buffer, n);
     const float outMag = buffer.getMagnitude(0, 0, n);
     peak(outPeak, outMag);
     peak(oscOutPeak, outMag);
@@ -434,3 +439,99 @@ void ToneForgeProcessor::setStateInformation(const void* data, int size)
 juce::AudioProcessorEditor* ToneForgeProcessor::createEditor() { return new ToneForgeEditor(*this); }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new ToneForgeProcessor(); }
+
+void ToneForgeProcessor::runLooper(juce::AudioBuffer<float>& buffer, int n)
+{
+    const int max = loopBuf.getNumSamples(), nch = buffer.getNumChannels();
+    if (const int c = loopCmd.exchange(-1); c >= 0 && max > 0)
+    {
+        const int st = loopState;
+        if (c == loopClear)
+        {
+            loopState = loopEmpty;
+            loopLen = loopPos = 0;
+        }
+        else if (c == loopRec && st == loopEmpty)
+        {
+            loopState = loopRec;
+            loopLen = loopPos = 0;
+        }
+        else if (c == loopPlay && st != loopEmpty)
+        {
+            if (st == loopRec)
+                loopLen = loopPos.load();
+            if (st == loopRec || st == loopStop)
+                loopPos = 0;
+            loopState = loopLen > 0 ? loopPlay : loopEmpty;
+        }
+        else if ((c == loopDub && st == loopPlay) || (c == loopStop && st != loopEmpty))
+        {
+            if (st == loopRec)   // arrêt pendant la prise : la boucle garde ce qui est enregistré
+                loopLen = loopPos.load();
+            loopState = c;
+        }
+    }
+    const int st = loopState;
+    if (st == loopRec || st == loopPlay || st == loopDub)
+    {
+        int pos = loopPos, len = loopLen;
+        for (int i = 0; i < n; ++i)
+        {
+            for (int ch = 0; ch < nch; ++ch)
+            {
+                float* o = buffer.getWritePointer(ch);
+                float* l = loopBuf.getWritePointer(juce::jmin(ch, 1));
+                if (st == loopRec)
+                    { if (ch < 2) l[pos] = o[i]; }
+                else
+                {
+                    const float old = l[pos];
+                    if (st == loopDub && ch < 2)
+                        l[pos] = old + o[i];
+                    o[i] += old;
+                }
+            }
+            if (st == loopRec)
+            {
+                if (++pos >= max)   // 60 s atteintes : la boucle se referme et part en lecture
+                {
+                    loopLen = len = max;
+                    pos = 0;
+                    loopState = loopPlay;
+                    loopPos = 0;
+                    return;
+                }
+            }
+            else if (++pos >= len)
+                pos = 0;
+        }
+        loopPos = pos;
+    }
+
+    // Métronome : clic de 30 ms (temps 1 plus aigu), au tempo du delay
+    if (!metroOn)
+    {
+        sinceBeat = 1e9;
+        return;
+    }
+    const double spb = sr * 60.0 / juce::jlimit(30.f, 300.f, metroBpm.load());
+    const int clickLen = (int) (sr * 0.03);
+    for (int i = 0; i < n; ++i)
+    {
+        if (++sinceBeat >= spb)
+        {
+            const bool first = sinceBeat >= 1e8;   // départ : le premier clic est le temps 1
+            sinceBeat = first ? 0.0 : sinceBeat - spb;
+            clickBeat = first ? 0 : (clickBeat + 1) % 4;
+            clickPos = 0;
+        }
+        if (clickPos < clickLen)
+        {
+            const double f = clickBeat == 0 ? 1500.0 : 1000.0, t = clickPos / sr;
+            const float s = 0.35f * (float) (std::sin(juce::MathConstants<double>::twoPi * f * t) * std::exp(-t * 150.0));
+            for (int ch = 0; ch < nch; ++ch)
+                buffer.getWritePointer(ch)[i] += s;
+            ++clickPos;
+        }
+    }
+}

@@ -124,6 +124,8 @@ private:
     juce::Array<double> taps;      // instants des derniers coups de Tap (ms)
     juce::TextButton tunerBtn { u8("♪ Accordeur") };
     std::vector<float> tunerBuf;
+    juce::TextButton loopBtn, loopStopBtn, metroBtn;   // looper + métronome (haut de la grille)
+    void updateLooper();
 
     // Mode « Son IA » : demande en texte libre -> capture, IR et réglages choisis par OpenRouter
     juce::TextButton aiBtn, aiGo, aiClose { "Fermer" };

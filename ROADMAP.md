@@ -31,7 +31,9 @@ Fonctions inspirées d'AmpliTube 5 (vues en rétro-ingénierie, cf. `C:\dev\ampl
 - [x] Test (2026-10-15)
 
 ### 6. Looper + métronome (modèle : `LOOP1/2`, `Looper_Metronome`)
-- Enregistrer / superposer / lire une boucle, clic au tempo du Tap
+- [x] Boutons en haut de la grille : ⏺ Boucle → enregistrement → lecture ↔ superposition ; ■ arrête, ✕ efface ; 60 s max, sortie stéréo enregistrée (2026-10-15, compilé)
+- [x] ♩ Métronome au tempo du delay (donc du Tap), temps 1 accentué, jamais enregistré dans la boucle
+- [x] Test (2026-10-15)
 
 ### 7. Macro Min/Max/Courbe (modèle : `<MidiAssignments>` Min/Max/Curve)
 - Une molette qui pilote plusieurs paramètres, chacun avec sa plage et sa courbe

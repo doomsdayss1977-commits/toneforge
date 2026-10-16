@@ -68,6 +68,13 @@ public:
     std::atomic<bool> tunerOn { false };
     void readTuner(std::vector<float>& out, int n, int dec) const;   // n derniers points, moyennés par dec
 
+    // Looper (modèle : LOOP1 d'AmpliTube) : enregistre la sortie et la rejoue ; métronome par-dessus, jamais enregistré.
+    enum { loopEmpty, loopRec, loopPlay, loopDub, loopStop, loopClear };
+    std::atomic<int> loopState { loopEmpty }, loopCmd { -1 }, loopLen { 0 }, loopPos { 0 };   // loopCmd : appliquée par le thread audio
+    std::atomic<bool> metroOn { false };
+    std::atomic<float> metroBpm { 120.f };
+    int loopMax() const { return loopBuf.getNumSamples(); }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
     void updateEq();
@@ -119,6 +126,10 @@ private:
     float ring[kRing] {};
     std::atomic<int> ringPos { 0 };
     int maxBlock = 512;
+    juce::AudioBuffer<float> loopBuf;   // 2 canaux, 60 s
+    int clickPos = 1 << 30, clickBeat = 0;
+    double sinceBeat = 1e9;
+    void runLooper(juce::AudioBuffer<float>&, int n);
     std::unique_ptr<OscServer> osc;   // dernier membre : détruit en premier
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToneForgeProcessor)

@@ -474,6 +474,22 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     tunerBtn.setClickingTogglesState(false);
     tunerBtn.onClick = [this] { showTuner(!proc.tunerOn); };
     addAndMakeVisible(tunerBtn);
+    // Looper : ⏺ enregistre, puis lecture <-> superposition ; ■ arrête, ✕ efface
+    loopBtn.onClick = [this]
+    {
+        const int st = proc.loopState;
+        proc.loopCmd = st == ToneForgeProcessor::loopEmpty ? ToneForgeProcessor::loopRec
+                     : st == ToneForgeProcessor::loopPlay ? ToneForgeProcessor::loopDub : ToneForgeProcessor::loopPlay;
+    };
+    loopStopBtn.onClick = [this]
+    {
+        proc.loopCmd = proc.loopState == ToneForgeProcessor::loopStop ? ToneForgeProcessor::loopClear : ToneForgeProcessor::loopStop;
+    };
+    metroBtn.setClickingTogglesState(false);
+    metroBtn.onClick = [this] { proc.metroOn = !proc.metroOn; };
+    for (auto* b : { &loopBtn, &loopStopBtn, &metroBtn })
+        addAndMakeVisible(b);
+    updateLooper();
 
     // Son IA
     aiBtn.setButtonText(u8("✦ Son IA"));
@@ -911,6 +927,7 @@ void ToneForgeEditor::timerCallback()
     auto fall = [](float& lvl, std::atomic<float>& pk) { lvl = juce::jmax(pk.exchange(0.f), lvl * 0.85f); };
     fall(levelIn, proc.inPeak);
     fall(levelOut, proc.outPeak);
+    updateLooper();
     // Aiguilles avec inertie, comme un vrai VU
     needleIn += (juce::Decibels::gainToDecibels(levelIn, -60.f) - needleIn) * 0.3f;
     needleOut += (juce::Decibels::gainToDecibels(levelOut, -60.f) - needleOut) * 0.3f;
@@ -1220,6 +1237,14 @@ void ToneForgeEditor::resized()
         k->slider.setBounds(col);
     }
     panelInfo.setBounds(grilleArea.reduced(20, 10).removeFromBottom(24));
+    {
+        auto lr = grilleArea.reduced(20, 10).removeFromTop(30);
+        loopStopBtn.setBounds(lr.removeFromRight(40));
+        lr.removeFromRight(6);
+        loopBtn.setBounds(lr.removeFromRight(170));
+        lr.removeFromRight(6);
+        metroBtn.setBounds(lr.removeFromRight(100));
+    }
 
     // Panneau IA par-dessus la façade
     for (auto& k : knobs)
@@ -1231,6 +1256,8 @@ void ToneForgeEditor::resized()
     panelInfo.setVisible(!aiOpen);
     bypass.setVisible(!aiOpen && defs[selected].onId.isNotEmpty());
     presetBtn.setVisible(!aiOpen);
+    for (auto* b : { &loopBtn, &loopStopBtn, &metroBtn })
+        b->setVisible(!aiOpen);
     tapBtn.setVisible(!aiOpen && blockKey(selected) == "delay");
     for (auto* c : { (juce::Component*) &aiPrompt, (juce::Component*) &aiGo, (juce::Component*) &aiClose, (juce::Component*) &aiOut })
     {
@@ -1630,4 +1657,42 @@ void ToneForgeEditor::tagMenu(int row)
         else if (r > 0)
             toggle(all[r - 1]);
     });
+}
+
+// Looper et métronome : libellés selon l'état ; tempo du métronome = temps du delay (donc le Tap).
+void ToneForgeEditor::updateLooper()
+{
+    using P = ToneForgeProcessor;
+    const int st = proc.loopState;
+    const double sr = proc.getSampleRate() > 0 ? proc.getSampleRate() : 48000.0;
+    const auto secs = juce::String((st == P::loopRec ? proc.loopPos.load() : proc.loopLen.load()) / sr, 1) + " s";
+    const juce::String txt = st == P::loopEmpty ? u8("⏺ Boucle")
+                           : st == P::loopRec   ? u8("● Enreg. ") + secs
+                           : st == P::loopPlay  ? u8("▶ Lecture ") + secs
+                           : st == P::loopDub   ? u8("● Superpos. ") + secs
+                                                : u8("▶ Reprendre ") + secs;
+    if (loopBtn.getButtonText() != txt)
+    {
+        loopBtn.setButtonText(txt);
+        const auto col = st == P::loopRec || st == P::loopDub ? tf::bad : st == P::loopPlay ? tf::ok : tf::panel2;
+        loopBtn.setColour(juce::TextButton::buttonColourId, col.withAlpha(st == P::loopEmpty || st == P::loopStop ? 1.f : 0.45f));
+        loopStopBtn.setButtonText(st == P::loopStop ? u8("✕") : u8("■"));
+        loopStopBtn.setEnabled(st != P::loopEmpty);
+        loopStopBtn.setTooltip(st == P::loopStop ? "Effacer la boucle" : u8("Arrêter"));
+    }
+    if (auto* d = proc.apvts.getRawParameterValue("delay_0"))
+    {
+        double bpm = 60000.0 / delayMs(d->load(), sr);
+        while (bpm > 240.0)
+            bpm *= 0.5;
+        while (bpm < 40.0)
+            bpm *= 2.0;
+        proc.metroBpm = (float) bpm;
+        const auto mt = u8("♩ ") + juce::String(juce::roundToInt(bpm));
+        if (metroBtn.getButtonText() != mt || metroBtn.getToggleState() != proc.metroOn.load())
+        {
+            metroBtn.setButtonText(mt);
+            metroBtn.setToggleState(proc.metroOn, juce::dontSendNotification);
+        }
+    }
 }
