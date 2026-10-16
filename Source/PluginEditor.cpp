@@ -245,6 +245,7 @@ juce::String captureBrand(const juce::String& s, bool pedal) { return brandOf(s,
 TfLook::TfLook()
 {
     using namespace tf;
+    setDefaultSansSerifTypefaceName("Bahnschrift");   // police de Windows 10/11, rien à embarquer
     setColour(juce::ResizableWindow::backgroundColourId, bg);
     setColour(juce::Label::textColourId, txt);
     setColour(juce::Slider::textBoxTextColourId, ink);
@@ -432,11 +433,17 @@ void TfLook::drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce
     if (down)
         std::swap(top, bot);
     g.setGradientFill(juce::ColourGradient(top, 0, r.getY(), bot, 0, r.getBottom(), false));
-    g.fillRoundedRectangle(r, 6.f);
+    const float rad = b.getProperties()["pill"] ? r.getHeight() * 0.5f : 6.f;   // pastilles de marque
+    g.fillRoundedRectangle(r, rad);
     g.setColour(juce::Colours::white.withAlpha(on ? 0.35f : 0.09f));
-    g.drawHorizontalLine((int) r.getY() + 1, r.getX() + 5.f, r.getRight() - 5.f);
+    g.drawHorizontalLine((int) r.getY() + 1, r.getX() + rad, r.getRight() - rad);
+    if (on && rad > 6.f)
+    {
+        g.setColour(tf::acc.withAlpha(0.3f));
+        g.drawRoundedRectangle(r.expanded(0.5f), rad, 2.f);
+    }
     g.setColour(juce::Colours::black.withAlpha(0.75f));
-    g.drawRoundedRectangle(r, 6.f, 1.f);
+    g.drawRoundedRectangle(r, rad, 1.f);
 }
 
 void TfLook::fillTextEditorBackground(juce::Graphics& g, int w, int h, juce::TextEditor&)
@@ -515,15 +522,16 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     countLbl.setFont(12.f);
     addAndMakeVisible(countLbl);
     list.setRowHeight(46);
+    list.addMouseListener(this, true);   // survol des lignes
     list.getViewport()->setScrollBarsShown(false, false, true, false);   // défilement à la molette, sans barre (son curseur minuscule semblait parasite)
     addAndMakeVisible(list);
 
     // Écran LCD, plaque et grille
-    nameLbl.setFont(juce::FontOptions("Consolas", 19.f, juce::Font::bold));
+    nameLbl.setFont(juce::FontOptions("Cascadia Mono", 19.f, juce::Font::bold));
     nameLbl.setColour(juce::Label::textColourId, tf::amber);
     nameLbl.setJustificationType(juce::Justification::centred);
     warnLbl.setColour(juce::Label::textColourId, tf::amber.withAlpha(0.75f));
-    warnLbl.setFont(juce::FontOptions("Consolas", 11.f, juce::Font::plain));
+    warnLbl.setFont(juce::FontOptions("Cascadia Mono", 11.f, juce::Font::plain));
     warnLbl.setJustificationType(juce::Justification::centred);
     panelTitle.setFont(juce::FontOptions(16.f, juce::Font::bold));
     panelTitle.setColour(juce::Label::textColourId, tf::ink);
@@ -674,6 +682,7 @@ void ToneForgeEditor::rebuildBrands()
     {
         auto* b = brandBtns.add(new juce::TextButton(n));
         b->setClickingTogglesState(false);
+        b->getProperties().set("pill", true);
         b->setToggleState(n == "Toutes" ? brandFilter.isEmpty() : n == brandFilter, juce::dontSendNotification);
         b->onClick = [this, n]
         {
@@ -742,18 +751,26 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
         return;
     }
     const bool isCurrent = e.file == current(target(tab));
+    const bool hov = row == hoverRow;
     const auto r = juce::Rectangle<int>(0, 0, w, h).toFloat().reduced(3.f, 2.f);
-    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff272b32), 0, r.getY(), juce::Colour(0xff1b1e23), 0, r.getBottom(), false));
-    g.fillRoundedRectangle(r, 7.f);
-    if (isCurrent)
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff272b32).brighter(hov ? 0.2f : 0.f), 0, r.getY(), juce::Colour(0xff1b1e23), 0, r.getBottom(), false));
+    g.fillRoundedRectangle(r, 8.f);
+    if (isCurrent)   // capture chargée : lueur orange qui part de la gauche + barre lumineuse
     {
-        g.setColour(tf::acc.withAlpha(0.12f));
-        g.fillRoundedRectangle(r, 7.f);
+        g.setGradientFill(juce::ColourGradient(tf::acc.withAlpha(0.22f), r.getX(), 0, tf::acc.withAlpha(0.f), r.getX() + r.getWidth() * 0.6f, 0, false));
+        g.fillRoundedRectangle(r, 8.f);
+        for (int i = 3; i > 0; --i)
+        {
+            g.setColour(tf::acc.withAlpha(0.1f * (float) (4 - i)));
+            g.fillRoundedRectangle(r.withWidth(4.f + 3.f * (float) i), 3.f);
+        }
+        g.setColour(tf::acc);
     }
-    g.setColour(isCurrent ? tf::acc : juce::Colours::black.withAlpha(0.6f));
-    g.drawRoundedRectangle(r, 7.f, isCurrent ? 1.6f : 1.f);
-    g.setColour(bc);
+    else
+        g.setColour(bc.withAlpha(hov ? 1.f : 0.7f));
     g.fillRoundedRectangle(r.withWidth(4.f), 2.f);
+    g.setColour(hov && !isCurrent ? tf::acc2.withAlpha(0.45f) : juce::Colours::black.withAlpha(0.6f));
+    g.drawRoundedRectangle(r, 8.f, 1.f);
 
     const auto badge = juce::Rectangle<float>(28.f, 28.f).withCentre({ r.getX() + 24.f, r.getCentreY() });
     g.setGradientFill(juce::ColourGradient(bc.brighter(0.3f), badge.getX(), badge.getY(), bc.darker(0.45f), badge.getRight(), badge.getBottom(), false));
@@ -782,6 +799,17 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
     }
     g.setColour(tf::dim);
     g.drawText(e.group, t, juce::Justification::centredLeft, true);
+}
+
+void ToneForgeEditor::mouseMove(const juce::MouseEvent& e)
+{
+    const auto p = e.getEventRelativeTo(&list).position.toInt();
+    const int r = list.getLocalBounds().contains(p)
+                    ? list.getRowContainingPosition(p.x, p.y) : -1;
+    if (r == hoverRow)
+        return;
+    list.repaintRow(hoverRow);
+    list.repaintRow(hoverRow = r);
 }
 
 void ToneForgeEditor::listBoxItemClicked(int row, const juce::MouseEvent& m)
@@ -1025,6 +1053,18 @@ void ToneForgeEditor::timerCallback()
     // Aiguilles avec inertie, comme un vrai VU
     needleIn += (juce::Decibels::gainToDecibels(levelIn, -60.f) - needleIn) * 0.3f;
     needleOut += (juce::Decibels::gainToDecibels(levelOut, -60.f) - needleOut) * 0.3f;
+    auto holdPeak = [](float& h, int& t, float db)
+    {
+        if (db >= h)
+        {
+            h = db;
+            t = 30;
+        }
+        else if (--t < 0)
+            h = juce::jmax(-60.f, h - 1.f);
+    };
+    holdPeak(holdIn, holdInT, needleIn);
+    holdPeak(holdOut, holdOutT, needleOut);
     repaint(meterIn.getUnion(meterOut).expanded(2));
 
     // Capture/IR chargée d'ailleurs (OSC, état restauré) : affichage à jour
@@ -1223,46 +1263,43 @@ void ToneForgeEditor::paint(juce::Graphics& g)
         }
     }
 
-    // VU-mètres à aiguille (-30 à +3 dB, zone rouge au-dessus de 0)
-    auto vu = [&g](juce::Rectangle<int> box, float db, const char* lbl)
+    // Vumètres LED : 16 segments de -48 à +3 dB (vert, jaune dès -12, rouge dès -3), crête maintenue 1 s
+    auto vu = [&g](juce::Rectangle<int> box, float db, float hold, const char* lbl)
     {
-        using juce::Colour;
         const auto r = box.toFloat();
-        g.setColour(juce::Colours::black);
-        g.fillRoundedRectangle(r, 4.f);
-        const auto face = r.reduced(3.f);
-        g.setGradientFill(juce::ColourGradient(Colour(0xfff6ecd0), 0, face.getY(), Colour(0xffd6c394), 0, face.getBottom(), false));
-        g.fillRoundedRectangle(face, 3.f);
-        juce::Graphics::ScopedSaveState s(g);
-        g.reduceClipRegion(face.toNearestInt());
-        const juce::Point<float> piv(face.getCentreX(), face.getBottom() + face.getHeight() * 0.35f);
-        const float R = face.getHeight() * 1.08f;
-        auto ang = [](float d) { return -0.8f + 1.6f * juce::jlimit(0.f, 1.f, (d + 30.f) / 33.f); };
-        juce::Path scale, red;
-        scale.addCentredArc(piv.x, piv.y, R, R, 0.f, ang(-30.f), ang(0.f), true);
-        red.addCentredArc(piv.x, piv.y, R, R, 0.f, ang(0.f), ang(3.f), true);
-        g.setColour(tf::ink);
-        g.strokePath(scale, juce::PathStrokeType(1.2f));
-        g.setColour(juce::Colour(0xffd0302a));
-        g.strokePath(red, juce::PathStrokeType(3.f));
-        for (float d : { -20.f, -10.f, -7.f, -5.f, -3.f, -1.f, 0.f, 1.f, 2.f, 3.f })
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff15171c), 0, r.getY(), juce::Colour(0xff0a0b0e), 0, r.getBottom(), false));
+        g.fillRoundedRectangle(r, 8.f);
+        g.setColour(juce::Colours::white.withAlpha(0.07f));
+        g.drawRoundedRectangle(r.reduced(0.5f), 8.f, 1.f);
+        auto in = r.reduced(8.f, 6.f);
+        auto head = in.removeFromTop(13.f);
+        g.setColour(tf::dim);
+        g.setFont(juce::FontOptions(10.f, juce::Font::bold));
+        g.drawText(lbl, head, juce::Justification::centredLeft);
+        g.setColour(hold > -3.f ? tf::bad : tf::txt);
+        g.setFont(juce::FontOptions("Cascadia Mono", 10.f, juce::Font::plain));
+        g.drawText(hold <= -59.f ? juce::String("-inf") : juce::String(hold, 1), head, juce::Justification::centredRight);
+        in.removeFromTop(4.f);
+        constexpr int n = 16;
+        const float sw = in.getWidth() / (float) n;
+        const int holdSeg = (int) std::floor((hold + 48.f) / 51.f * (float) n);
+        for (int i = 0; i < n; ++i)
         {
-            g.setColour(d > 0.f ? juce::Colour(0xffd0302a) : tf::ink);
-            g.drawLine({ piv.getPointOnCircumference(R, ang(d)), piv.getPointOnCircumference(R + 5.f, ang(d)) }, 1.f);
+            const float d = -48.f + 51.f * (float) i / (float) n;
+            const auto col = d >= -3.f ? tf::bad : d >= -12.f ? tf::warn : tf::ok;
+            const bool lit = db > d || i == holdSeg;
+            const auto seg = juce::Rectangle<float>(in.getX() + sw * (float) i + 1.f, in.getY(), sw - 2.f, in.getHeight());
+            if (lit)
+            {
+                g.setColour(col.withAlpha(0.3f));
+                g.fillRoundedRectangle(seg.expanded(1.5f), 2.5f);
+            }
+            g.setColour(lit ? col : col.withAlpha(0.12f));
+            g.fillRoundedRectangle(seg, 1.5f);
         }
-        g.setColour(tf::ink);
-        g.setFont(juce::FontOptions(9.f, juce::Font::bold));
-        g.drawText("VU", face.withTrimmedTop(face.getHeight() * 0.45f).toNearestInt(), juce::Justification::centred);
-        g.setFont(8.f);
-        g.drawText(lbl, face.reduced(4.f, 2.f).toNearestInt(), juce::Justification::bottomLeft);
-        g.setColour(juce::Colour(0xff111111));
-        g.drawLine({ piv, piv.getPointOnCircumference(R + 3.f, ang(db)) }, 1.4f);
-        g.fillRect(face.withTop(face.getBottom() - 5.f));
-        g.setColour(juce::Colours::white.withAlpha(0.12f));
-        g.fillRect(face.withHeight(face.getHeight() * 0.4f));
     };
-    vu(meterIn, needleIn, "IN");
-    vu(meterOut, needleOut, "OUT");
+    vu(meterIn, needleIn, holdIn, "IN");
+    vu(meterOut, needleOut, holdOut, "OUT");
 }
 
 void ToneForgeEditor::resized()

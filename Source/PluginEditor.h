@@ -77,6 +77,8 @@ private:
     void listBoxItemClicked(int row, const juce::MouseEvent&) override;
 
     void timerCallback() override;
+    void mouseMove(const juce::MouseEvent&) override;   // survol des lignes de la liste (écoutée avec ses enfants)
+    void mouseExit(const juce::MouseEvent& e) override { mouseMove(e); }
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { dirty = true; }
     void scanLibrary();
     void filterList();
@@ -153,6 +155,9 @@ private:
     juce::Image grain, bgCache;   // texture tolex ; décor statique pré-rendu (refait au changement de bloc)
     float levelIn = 0.f, levelOut = 0.f, needleIn = -60.f, needleOut = -60.f;   // aiguilles VU en dB
     int ticks = 0;
+    int hoverRow = -1;
+    float holdIn = -60.f, holdOut = -60.f;   // crêtes maintenues des vumètres LED (dB)
+    int holdInT = 0, holdOutT = 0;
     float pulse = 0.f;   // position (0-1) de l'impulsion qui parcourt le câble de la chaîne
     juce::Rectangle<int> cableStrip() const;
     int seenLoad = -1;
