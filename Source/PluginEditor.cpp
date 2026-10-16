@@ -264,63 +264,52 @@ TfLook::TfLook()
     setColour(juce::ToggleButton::textColourId, ink);
 }
 
-// Potard chromé : graduations imprimées, arc lumineux de la valeur, jupe moletée, capuchon chromé.
+// Molette néon : piste sombre, arc de valeur en dégradé orange -> cyan avec halo, disque mat, point lumineux, valeur au centre.
 void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& sl)
 {
     using juce::Colour;
     namespace Colours = juce::Colours;
     const auto box = juce::Rectangle<int>(x, y, w, h).toFloat();
-    const float rad = juce::jmin(box.getWidth(), box.getHeight()) * 0.5f - 15.f;
+    const float rad = juce::jmin(box.getWidth(), box.getHeight()) * 0.5f - 8.f;
     const auto c = box.getCentre();
     const float a = a0 + pos * (a1 - a0);
+    const auto hot = tf::acc.interpolatedWith(tf::acc2, pos);
 
-    g.setColour(sl.findColour(juce::Slider::textBoxTextColourId).withAlpha(0.75f));
-    for (int i = 0; i <= 10; ++i)
+    juce::Path track, arc;
+    track.addCentredArc(c.x, c.y, rad, rad, 0.f, a0, a1, true);
+    arc.addCentredArc(c.x, c.y, rad, rad, 0.f, a0, a, true);
+    const auto stroke = [](float wd) { return juce::PathStrokeType(wd, juce::PathStrokeType::curved, juce::PathStrokeType::rounded); };
+    g.setColour(Colours::black.withAlpha(0.45f));
+    g.strokePath(track, stroke(5.f));
+    const juce::ColourGradient grad(tf::acc, c.x - rad, c.y, tf::acc2, c.x + rad, c.y, false);
+    for (int i = 3; i > 0; --i)   // halo
     {
-        const float t = a0 + (a1 - a0) * (float) i / 10.f;
-        const bool major = i % 5 == 0;
-        g.drawLine({ c.getPointOnCircumference(rad + 3.f, t), c.getPointOnCircumference(rad + (major ? 10.f : 7.f), t) },
-                   major ? 2.f : 1.2f);
+        g.setGradientFill(grad);
+        g.setOpacity(0.07f * (float) (4 - i));
+        g.strokePath(arc, stroke(5.f + (float) i * 5.f));
     }
-    juce::Path arc;
-    arc.addCentredArc(c.x, c.y, rad + 13.f, rad + 13.f, 0.f, a0, a, true);
-    g.setColour(tf::acc.withAlpha(0.3f));
-    g.strokePath(arc, juce::PathStrokeType(6.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour(tf::acc);
-    g.strokePath(arc, juce::PathStrokeType(2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setOpacity(1.f);
+    g.setGradientFill(grad);
+    g.strokePath(arc, stroke(4.f));
 
-    for (int i = 6; i > 0; --i)
-    {
-        g.setColour(Colours::black.withAlpha(0.07f));
-        g.fillEllipse(juce::Rectangle<float>(rad * 2 + (float) i * 2, rad * 2 + (float) i * 2).withCentre(c.translated(0, 4)));
-    }
-    const auto skirt = juce::Rectangle<float>(rad * 2, rad * 2).withCentre(c);
-    g.setGradientFill(juce::ColourGradient(Colour(0xff3d4045), c.x, skirt.getY(), Colour(0xff0d0e10), c.x, skirt.getBottom(), false));
-    g.fillEllipse(skirt);
-    for (int i = 0; i < 60; ++i)
-    {
-        const float t = (float) i * juce::MathConstants<float>::twoPi / 60.f;
-        g.setColour(i % 2 ? Colours::white.withAlpha(0.1f) : Colours::black.withAlpha(0.5f));
-        g.drawLine({ c.getPointOnCircumference(rad * 0.86f, t), c.getPointOnCircumference(rad - 0.5f, t) }, 1.2f);
-    }
+    const float dr = rad - 10.f;
+    const auto disc = juce::Rectangle<float>(dr * 2, dr * 2).withCentre(c);
+    g.setColour(Colours::black.withAlpha(0.35f));
+    g.fillEllipse(disc.translated(0, 3).expanded(2));
+    g.setGradientFill(juce::ColourGradient(Colour(0xff30343d), c.x, disc.getY(), Colour(0xff121419), c.x, disc.getBottom(), false));
+    g.fillEllipse(disc);
+    g.setColour(Colours::white.withAlpha(0.08f));
+    g.drawEllipse(disc.reduced(0.5f), 1.f);
 
-    const float cr = rad * 0.66f;
-    const auto cap = juce::Rectangle<float>(cr * 2, cr * 2).withCentre(c);
-    juce::ColourGradient chrome(Colour(0xfff6f8fa), c.x - cr * 0.4f, c.y - cr * 0.5f, Colour(0xff4c5158), c.x + cr, c.y + cr, true);
-    chrome.addColour(0.45, Colour(0xffa9aeb5));
-    g.setGradientFill(chrome);
-    g.fillEllipse(cap);
-    g.setColour(Colours::white.withAlpha(0.07f));
-    for (float k = 0.25f; k < 1.f; k += 0.15f)
-        g.drawEllipse(juce::Rectangle<float>(cr * 2 * k, cr * 2 * k).withCentre(c), 0.8f);
-    g.setColour(Colours::black.withAlpha(0.6f));
-    g.drawEllipse(cap, 1.f);
+    const auto dot = c.getPointOnCircumference(dr - 7.f, a);
+    g.setColour(hot.withAlpha(0.3f));
+    g.fillEllipse(juce::Rectangle<float>(12.f, 12.f).withCentre(dot));
+    g.setColour(hot);
+    g.fillEllipse(juce::Rectangle<float>(6.f, 6.f).withCentre(dot));
 
-    const auto p0 = c.getPointOnCircumference(rad * 0.3f, a), p1 = c.getPointOnCircumference(rad * 0.97f, a);
-    g.setColour(Colours::black.withAlpha(0.6f));
-    g.drawLine({ p0, p1 }, 4.5f);
-    g.setColour(Colours::white);
-    g.drawLine({ p0, p1 }, 2.5f);
+    g.setColour(tf::txt);
+    g.setFont(juce::FontOptions(juce::jlimit(11.f, 16.f, dr * 0.42f), juce::Font::bold));
+    g.drawFittedText(sl.getTextFromValue(sl.getValue()), disc.reduced(dr * 0.3f).toNearestInt(), juce::Justification::centred, 1);
 }
 
 // Interrupteur à levier chromé + LED.
@@ -351,6 +340,82 @@ void TfLook::drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool, bo
 juce::Font TfLook::getTextButtonFont(juce::TextButton& b, int h)
 {
     return b.getProperties()["tab"] ? juce::Font(juce::FontOptions(11.5f)) : LookAndFeel_V4::getTextButtonFont(b, h);
+}
+
+// Icônes vectorielles (les émojis changent de rendu selon la police de Windows).
+static void drawIcon(juce::Graphics& g, const juce::String& id, juce::Rectangle<float> r, juce::Colour col)
+{
+    const float l = r.getX(), t = r.getY(), w = r.getWidth(), h = r.getHeight(), cx = r.getCentreX();
+    const juce::PathStrokeType st(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    juce::Path p;
+    g.setColour(col);
+    if (id == "rec")
+    {
+        g.setColour(tf::bad);
+        g.fillEllipse(r.reduced(w * 0.15f));
+    }
+    else if (id == "play")
+    {
+        p.addTriangle(l + w * 0.2f, t + h * 0.1f, l + w * 0.2f, t + h * 0.9f, l + w * 0.9f, r.getCentreY());
+        g.fillPath(p);
+    }
+    else if (id == "stop")
+        g.fillRoundedRectangle(r.reduced(w * 0.2f), 2.f);
+    else if (id == "clear")
+    {
+        const auto q = r.reduced(w * 0.22f);
+        p.startNewSubPath(q.getTopLeft());
+        p.lineTo(q.getBottomRight());
+        p.startNewSubPath(q.getTopRight());
+        p.lineTo(q.getBottomLeft());
+        g.strokePath(p, st);
+    }
+    else if (id == "tuner")   // diapason
+    {
+        const float a = l + w * 0.25f, b = l + w * 0.75f, y = t + h * 0.6f;
+        p.startNewSubPath(a, t);
+        p.lineTo(a, t + h * 0.4f);
+        p.quadraticTo(a, y, cx, y);
+        p.quadraticTo(b, y, b, t + h * 0.4f);
+        p.lineTo(b, t);
+        p.startNewSubPath(cx, y);
+        p.lineTo(cx, t + h);
+        g.strokePath(p, st);
+    }
+    else if (id == "metro")   // métronome
+    {
+        p.startNewSubPath(cx - w * 0.15f, t);
+        p.lineTo(cx + w * 0.15f, t);
+        p.lineTo(l + w * 0.85f, t + h);
+        p.lineTo(l + w * 0.15f, t + h);
+        p.closeSubPath();
+        p.startNewSubPath(cx, t + h * 0.75f);
+        p.lineTo(cx + w * 0.35f, t + h * 0.1f);
+        g.strokePath(p, st);
+    }
+    else if (id == "ai")   // étincelle
+    {
+        p.addStar(r.getCentre(), 4, w * 0.14f, w * 0.5f);
+        g.fillPath(p);
+    }
+}
+
+void TfLook::drawButtonText(juce::Graphics& g, juce::TextButton& b, bool hover, bool down)
+{
+    const auto icon = b.getProperties()["icon"].toString();
+    if (icon.isEmpty())
+        return LookAndFeel_V4::drawButtonText(g, b, hover, down);
+    const auto font = getTextButtonFont(b, b.getHeight());
+    const auto text = b.getButtonText();
+    const float s = juce::jmin(15.f, (float) b.getHeight() * 0.45f), gap = text.isEmpty() ? 0.f : 7.f;
+    const float tw = juce::GlyphArrangement::getStringWidth(font, text);
+    const float x0 = ((float) b.getWidth() - s - gap - tw) * 0.5f;
+    const auto col = b.findColour(b.getToggleState() ? juce::TextButton::textColourOnId : juce::TextButton::textColourOffId)
+                         .withMultipliedAlpha(b.isEnabled() ? 1.f : 0.5f);
+    drawIcon(g, icon, { x0, ((float) b.getHeight() - s) * 0.5f, s, s }, col);
+    g.setColour(col);
+    g.setFont(font);
+    g.drawText(text, juce::Rectangle<float>(x0 + s + gap, 0.f, tw + 2.f, (float) b.getHeight()), juce::Justification::centredLeft, false);
 }
 
 void TfLook::drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down)
@@ -472,6 +537,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     tapBtn.onClick = [this] { tap(); };
     addAndMakeVisible(presetBtn);
     addChildComponent(tapBtn);
+    tunerBtn.getProperties().set("icon", "tuner");
     tunerBtn.setClickingTogglesState(false);
     tunerBtn.onClick = [this] { showTuner(!proc.tunerOn); };
     addAndMakeVisible(tunerBtn);
@@ -486,6 +552,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     {
         proc.loopCmd = proc.loopState == ToneForgeProcessor::loopStop ? ToneForgeProcessor::loopClear : ToneForgeProcessor::loopStop;
     };
+    metroBtn.getProperties().set("icon", "metro");
     metroBtn.setClickingTogglesState(false);
     metroBtn.onClick = [this] { proc.metroOn = !proc.metroOn; };
     for (auto* b : { &loopBtn, &loopStopBtn, &metroBtn })
@@ -505,7 +572,8 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     addAndMakeVisible(macroSlider);
 
     // Son IA
-    aiBtn.setButtonText(u8("✦ Son IA"));
+    aiBtn.setButtonText("Son IA");
+    aiBtn.getProperties().set("icon", "ai");
     aiBtn.setClickingTogglesState(false);
     aiBtn.onClick = [this]
     {
@@ -839,7 +907,7 @@ void ToneForgeEditor::selectBlock(int i)
         kn->label.setFont(juce::FontOptions(12.f, juce::Font::bold));
         kn->slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         kn->slider.setColour(juce::Slider::textBoxTextColourId, tf::ink);
-        kn->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        kn->slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);   // valeur dessinée au centre
         kn->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, d.ids[k], kn->slider);
         const int dec = proc.apvts.getParameterRange(d.ids[k]).end <= 1.f ? 2 : 1;
         kn->slider.textFromValueFunction = [dec](double v) { return juce::String(v, dec); };
@@ -1694,17 +1762,19 @@ void ToneForgeEditor::updateLooper()
     const int st = proc.loopState;
     const double sr = proc.getSampleRate() > 0 ? proc.getSampleRate() : 48000.0;
     const auto secs = juce::String((st == P::loopRec ? proc.loopPos.load() : proc.loopLen.load()) / sr, 1) + " s";
-    const juce::String txt = st == P::loopEmpty ? u8("● Boucle")   // ● et non ⏺ : Windows le rend en emoji bleu
-                           : st == P::loopRec   ? u8("● Enreg. ") + secs
-                           : st == P::loopPlay  ? u8("▶ Lecture ") + secs
-                           : st == P::loopDub   ? u8("● Superpos. ") + secs
-                                                : u8("▶ Reprendre ") + secs;
+    const juce::String txt = st == P::loopEmpty ? juce::String("Boucle")
+                           : st == P::loopRec   ? "Enreg. " + secs
+                           : st == P::loopPlay  ? "Lecture " + secs
+                           : st == P::loopDub   ? "Superpos. " + secs
+                                                : "Reprendre " + secs;
     if (loopBtn.getButtonText() != txt)
     {
         loopBtn.setButtonText(txt);
+        loopBtn.getProperties().set("icon", st == P::loopPlay || st == P::loopStop ? "play" : "rec");
         const auto col = st == P::loopRec || st == P::loopDub ? tf::bad : st == P::loopPlay ? tf::ok : tf::panel2;
         loopBtn.setColour(juce::TextButton::buttonColourId, col.withAlpha(st == P::loopEmpty || st == P::loopStop ? 1.f : 0.45f));
-        loopStopBtn.setButtonText(st == P::loopStop ? u8("✕") : u8("■"));
+        loopStopBtn.getProperties().set("icon", st == P::loopStop ? "clear" : "stop");
+        loopStopBtn.repaint();
         loopStopBtn.setEnabled(st != P::loopEmpty);
         loopStopBtn.setTooltip(st == P::loopStop ? "Effacer la boucle" : u8("Arrêter"));
     }
@@ -1716,7 +1786,7 @@ void ToneForgeEditor::updateLooper()
         while (bpm < 40.0)
             bpm *= 2.0;
         proc.metroBpm = (float) bpm;
-        const auto mt = u8("♩ ") + juce::String(juce::roundToInt(bpm));
+        const auto mt = juce::String(juce::roundToInt(bpm));
         if (metroBtn.getButtonText() != mt || metroBtn.getToggleState() != proc.metroOn.load())
         {
             metroBtn.setButtonText(mt);

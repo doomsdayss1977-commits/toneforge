@@ -19,6 +19,7 @@ public:
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool hover, bool down) override;
     void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool hover, bool down) override;
     juce::Font getTextButtonFont(juce::TextButton&, int h) override;
+    void drawButtonText(juce::Graphics&, juce::TextButton&, bool hover, bool down) override;   // propriété « icon » : icône vectorielle + texte
     void fillTextEditorBackground(juce::Graphics&, int w, int h, juce::TextEditor&) override;
     void drawTextEditorOutline(juce::Graphics&, int w, int h, juce::TextEditor&) override;
 };
@@ -132,7 +133,7 @@ private:
     juce::TextButton presetBtn { u8("Réglages ▾") }, tapBtn { "Tap" };
     juce::ValueTree clip;          // réglages copiés (type = clé du bloc)
     juce::Array<double> taps;      // instants des derniers coups de Tap (ms)
-    juce::TextButton tunerBtn { u8("♪ Accordeur") };
+    juce::TextButton tunerBtn { "Accordeur" };
     std::vector<float> tunerBuf;
     juce::TextButton loopBtn, loopStopBtn, metroBtn;   // looper + métronome (haut de la grille)
     void updateLooper();
