@@ -115,10 +115,13 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     for (auto& e : fx)
         e->setSampleRate((float) sampleRate);
     bufB.assign((size_t) samplesPerBlock, 0.f);
-    loopBuf.setSize(2, (int) (sampleRate * 60.0));
-    loopBuf.clear();
-    loopState = loopEmpty;
-    loopLen = loopPos = 0;
+    if (loopBuf.getNumSamples() != (int) (sampleRate * 60.0))   // même taux : la boucle survit à un nouveau prepare
+    {
+        loopBuf.setSize(2, (int) (sampleRate * 60.0));
+        loopBuf.clear();
+        loopState = loopEmpty;
+        loopLen = loopPos = 0;
+    }
     for (auto* s : { &pedal, &amp, &ampB })
     {
         const juce::SpinLock::ScopedLockType sl(s->lock);
@@ -217,7 +220,11 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         runNam(pedal, x, n, juce::Decibels::decibelsToGain(v("pedal_in")), juce::Decibels::decibelsToGain(v("pedal_out")));
     const float gIn = juce::Decibels::decibelsToGain(v("input"));
     const bool cabOn = irLoaded && v("ir_on") > 0.5f;
-    if (v("ampb_on") > 0.5f && ampB.loaded)
+    const bool bOn = v("ampb_on") > 0.5f && ampB.loaded;
+    if (bOn && !bActive)
+        cabB.reset();   // pas de reste de l'ancienne queue de convolution au rallumage
+    bActive = bOn;
+    if (bOn)
     {
         // Amplis A et B en parallèle (modèle : ChainSlot Amp A/B + Cab A/B d'AmpliTube), fondu linéaire
         const float mix = v("ab_mix"), gbIn = juce::Decibels::decibelsToGain(v("ampb_in")),
@@ -423,6 +430,7 @@ void ToneForgeProcessor::setStateInformation(const void* data, int size)
         return;
     auto s = juce::ValueTree::fromXml(*xml);
     apvts.replaceState(s);
+    lastMacro = apvts.getRawParameterValue("macro")->load();   // les cibles sauvées priment : pas de ré-application
     const juce::File m(s.getProperty("model").toString()), pd(s.getProperty("pedal").toString()),
         ir(s.getProperty("ir").toString());
     if (m.existsAsFile())
@@ -446,8 +454,35 @@ void ToneForgeProcessor::setStateInformation(const void* data, int size)
     const juce::File mb(s.getProperty("modelB").toString()), ib(s.getProperty("irB").toString());
     if (mb.existsAsFile())
         loadModel(mb, false, true);
+    else
+        unloadB(true, false);   // état sans ampli B : retirer celui en cours
     if (ib.existsAsFile())
         loadIR(ib, true);
+    else
+        unloadB(false, true);
+}
+
+void ToneForgeProcessor::unloadB(bool model, bool ir)
+{
+    if (model && modelBFile != juce::File())
+    {
+        std::unique_ptr<nam::DSP> old;
+        {
+            const juce::SpinLock::ScopedLockType sl(ampB.lock);
+            std::swap(ampB.model, old);
+            ampB.captureRate = 0;
+            ampB.loaded = false;
+        }
+        const juce::ScopedLock fl(fileLock);
+        modelBFile = juce::File();
+    }
+    if (ir && irBFile != juce::File())
+    {
+        irBLoaded = false;
+        const juce::ScopedLock fl(fileLock);
+        irBFile = juce::File();
+    }
+    ++loadSerial;
 }
 
 juce::AudioProcessorEditor* ToneForgeProcessor::createEditor() { return new ToneForgeEditor(*this); }

@@ -1474,6 +1474,8 @@ void ToneForgeEditor::applyBlock(int i, const juce::ValueTree& v)
         load(f, kind);   // d'abord la capture : charger une pédale l'allume
     if (const juce::File ir(v.getProperty("irB").toString()); kind == 3 && ir.existsAsFile())
         load(ir, 4);
+    else if (kind == 3)
+        proc.unloadB(false, true);   // preset sans IR B : retirer celle en cours
     for (int k = 0; k < v.getNumProperties(); ++k)
     {
         const auto id = v.getPropertyName(k);

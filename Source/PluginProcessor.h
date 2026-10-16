@@ -42,6 +42,7 @@ public:
     // Chargement depuis le thread de l'interface ; renvoie un message d'erreur vide si OK.
     juce::String loadModel(const juce::File&, bool isPedal = false, bool ampB = false);
     juce::String loadIR(const juce::File&, bool cabB = false);
+    void unloadB(bool model, bool ir);   // retire la capture et/ou l'IR de l'ampli B
     juce::File modelFile, pedalFile, irFile, modelBFile, irBFile;   // écrits sous fileLock (setStateInformation peut venir d'un autre fil)
     juce::File loadedFile(int kind) const   // 0 ampli, 1 pédale, 2 IR, 3 ampli B, 4 IR B ; copie sous verrou
     {
@@ -131,7 +132,8 @@ private:
     float ring[kRing] {};
     std::atomic<int> ringPos { 0 };
     int maxBlock = 512;
-    float lastMacro = -1.f;
+    std::atomic<float> lastMacro { -1.f };   // écrit aussi par setStateInformation
+    bool bActive = false;   // voie B active au bloc précédent (thread audio)
     juce::AudioBuffer<float> loopBuf;   // 2 canaux, 60 s
     int clickPos = 1 << 30, clickBeat = 0;
     double sinceBeat = 1e9;
