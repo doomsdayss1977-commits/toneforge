@@ -19,7 +19,9 @@ public:
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool hover, bool down) override;
     void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool hover, bool down) override;
     juce::Font getTextButtonFont(juce::TextButton&, int h) override;
-    void drawButtonText(juce::Graphics&, juce::TextButton&, bool hover, bool down) override;   // propriété « icon » : icône vectorielle + texte
+    void drawButtonText(juce::Graphics&, juce::TextButton&, bool hover, bool down) override;
+    juce::Slider::SliderLayout getSliderLayout(juce::Slider&) override;   // molette : valeur éditable au centre
+    juce::Label* createSliderTextBox(juce::Slider&) override;   // propriété « icon » : icône vectorielle + texte
     void fillTextEditorBackground(juce::Graphics&, int w, int h, juce::TextEditor&) override;
     void drawTextEditorOutline(juce::Graphics&, int w, int h, juce::TextEditor&) override;
 };
@@ -77,8 +79,6 @@ private:
     void listBoxItemClicked(int row, const juce::MouseEvent&) override;
 
     void timerCallback() override;
-    void mouseMove(const juce::MouseEvent&) override;   // survol des lignes de la liste (écoutée avec ses enfants)
-    void mouseExit(const juce::MouseEvent& e) override { mouseMove(e); }
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { dirty = true; }
     void scanLibrary();
     void filterList();
@@ -153,9 +153,9 @@ private:
 
     juce::Rectangle<int> topBar, chainArea, panelArea, plateArea, grilleArea, lcdArea, meterIn, meterOut;
     juce::Image grain, bgCache;   // texture tolex ; décor statique pré-rendu (refait au changement de bloc)
-    float levelIn = 0.f, levelOut = 0.f, needleIn = -60.f, needleOut = -60.f;   // aiguilles VU en dB
+    float levelIn = 0.f, levelOut = 0.f, needleIn = -60.f, needleOut = -60.f;   // niveaux crête des vumètres en dB
     int ticks = 0;
-    int hoverRow = -1;
+    int hoverRow = -1;   // ligne de la liste sous la souris (suivie par le timer)
     float holdIn = -60.f, holdOut = -60.f;   // crêtes maintenues des vumètres LED (dB)
     int holdInT = 0, holdOutT = 0;
     float pulse = 0.f;   // position (0-1) de l'impulsion qui parcourt le câble de la chaîne

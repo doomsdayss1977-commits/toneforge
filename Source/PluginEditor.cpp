@@ -241,6 +241,24 @@ static double delayNorm(double ms, double sr)
 juce::File libraryRoot() { return kRoot; }
 juce::String captureBrand(const juce::String& s, bool pedal) { return brandOf(s, pedal); }
 
+// Police à chasse fixe : Cascadia Mono (Windows 11 / Terminal), sinon Consolas, présente partout.
+static juce::String monoFont()
+{
+    static const juce::String name = juce::Font::findAllTypefaceNames().contains("Cascadia Mono") ? "Cascadia Mono" : "Consolas";
+    return name;
+}
+
+// Halo néon : le tracé repassé 3 fois, de plus en plus large et transparent.
+static void glow(juce::Graphics& g, const juce::Path& p, juce::FillType f, float w0, float dw, float a)
+{
+    for (int i = 3; i > 0; --i)
+    {
+        f.setOpacity(a * (float) (4 - i));
+        g.setFillType(f);
+        g.strokePath(p, juce::PathStrokeType(w0 + dw * (float) i, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+}
+
 //==============================================================================
 TfLook::TfLook()
 {
@@ -266,7 +284,7 @@ TfLook::TfLook()
 }
 
 // Molette néon : piste sombre, arc de valeur en dégradé orange -> cyan avec halo, disque mat, point lumineux, valeur au centre.
-void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& sl)
+void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider&)
 {
     using juce::Colour;
     namespace Colours = juce::Colours;
@@ -283,13 +301,7 @@ void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, flo
     g.setColour(Colours::black.withAlpha(0.45f));
     g.strokePath(track, stroke(5.f));
     const juce::ColourGradient grad(tf::acc, c.x - rad, c.y, tf::acc2, c.x + rad, c.y, false);
-    for (int i = 3; i > 0; --i)   // halo
-    {
-        g.setGradientFill(grad);
-        g.setOpacity(0.07f * (float) (4 - i));
-        g.strokePath(arc, stroke(5.f + (float) i * 5.f));
-    }
-    g.setOpacity(1.f);
+    glow(g, arc, grad, 5.f, 5.f, 0.07f);
     g.setGradientFill(grad);
     g.strokePath(arc, stroke(4.f));
 
@@ -307,10 +319,25 @@ void TfLook::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, flo
     g.fillEllipse(juce::Rectangle<float>(12.f, 12.f).withCentre(dot));
     g.setColour(hot);
     g.fillEllipse(juce::Rectangle<float>(6.f, 6.f).withCentre(dot));
+}
 
-    g.setColour(tf::txt);
-    g.setFont(juce::FontOptions(juce::jlimit(11.f, 16.f, dr * 0.42f), juce::Font::bold));
-    g.drawFittedText(sl.getTextFromValue(sl.getValue()), disc.reduced(dr * 0.3f).toNearestInt(), juce::Justification::centred, 1);
+// La valeur est la zone de texte du Slider posée au centre du disque : glisser règle, un clic permet de taper la valeur.
+juce::Slider::SliderLayout TfLook::getSliderLayout(juce::Slider& s)
+{
+    auto l = LookAndFeel_V4::getSliderLayout(s);
+    if (s.isRotary())
+    {
+        l.sliderBounds = s.getLocalBounds();
+        l.textBoxBounds = juce::Rectangle<int>(juce::jmin(56, s.getWidth()), 20).withCentre(l.sliderBounds.getCentre());
+    }
+    return l;
+}
+
+juce::Label* TfLook::createSliderTextBox(juce::Slider& s)
+{
+    auto* l = LookAndFeel_V4::createSliderTextBox(s);
+    l->setFont(juce::FontOptions(13.f, juce::Font::bold));
+    return l;
 }
 
 // Interrupteur à levier chromé + LED.
@@ -409,14 +436,14 @@ void TfLook::drawButtonText(juce::Graphics& g, juce::TextButton& b, bool hover, 
     const auto font = getTextButtonFont(b, b.getHeight());
     const auto text = b.getButtonText();
     const float s = juce::jmin(15.f, (float) b.getHeight() * 0.45f), gap = text.isEmpty() ? 0.f : 7.f;
-    const float tw = juce::GlyphArrangement::getStringWidth(font, text);
-    const float x0 = ((float) b.getWidth() - s - gap - tw) * 0.5f;
+    const float tw = juce::jlimit(0.f, juce::jmax(0.f, (float) b.getWidth() - 8.f - s - gap), juce::GlyphArrangement::getStringWidth(font, text));
+    const float x0 = juce::jmax(4.f, ((float) b.getWidth() - s - gap - tw) * 0.5f);
     const auto col = b.findColour(b.getToggleState() ? juce::TextButton::textColourOnId : juce::TextButton::textColourOffId)
                          .withMultipliedAlpha(b.isEnabled() ? 1.f : 0.5f);
     drawIcon(g, icon, { x0, ((float) b.getHeight() - s) * 0.5f, s, s }, col);
     g.setColour(col);
     g.setFont(font);
-    g.drawText(text, juce::Rectangle<float>(x0 + s + gap, 0.f, tw + 2.f, (float) b.getHeight()), juce::Justification::centredLeft, false);
+    g.drawFittedText(text, juce::Rectangle<float>(x0 + s + gap, 0.f, tw + 2.f, (float) b.getHeight()).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
 }
 
 void TfLook::drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down)
@@ -522,16 +549,15 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     countLbl.setFont(12.f);
     addAndMakeVisible(countLbl);
     list.setRowHeight(46);
-    list.addMouseListener(this, true);   // survol des lignes
     list.getViewport()->setScrollBarsShown(false, false, true, false);   // défilement à la molette, sans barre (son curseur minuscule semblait parasite)
     addAndMakeVisible(list);
 
     // Écran LCD, plaque et grille
-    nameLbl.setFont(juce::FontOptions("Cascadia Mono", 19.f, juce::Font::bold));
+    nameLbl.setFont(juce::FontOptions(monoFont(), 19.f, juce::Font::bold));
     nameLbl.setColour(juce::Label::textColourId, tf::amber);
     nameLbl.setJustificationType(juce::Justification::centred);
     warnLbl.setColour(juce::Label::textColourId, tf::amber.withAlpha(0.75f));
-    warnLbl.setFont(juce::FontOptions("Cascadia Mono", 11.f, juce::Font::plain));
+    warnLbl.setFont(juce::FontOptions(monoFont(), 11.f, juce::Font::plain));
     warnLbl.setJustificationType(juce::Justification::centred);
     panelTitle.setFont(juce::FontOptions(16.f, juce::Font::bold));
     panelTitle.setColour(juce::Label::textColourId, tf::ink);
@@ -759,11 +785,9 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
     {
         g.setGradientFill(juce::ColourGradient(tf::acc.withAlpha(0.22f), r.getX(), 0, tf::acc.withAlpha(0.f), r.getX() + r.getWidth() * 0.6f, 0, false));
         g.fillRoundedRectangle(r, 8.f);
-        for (int i = 3; i > 0; --i)
-        {
-            g.setColour(tf::acc.withAlpha(0.1f * (float) (4 - i)));
-            g.fillRoundedRectangle(r.withWidth(4.f + 3.f * (float) i), 3.f);
-        }
+        juce::Path bar;
+        bar.addRoundedRectangle(r.withWidth(4.f), 2.f);
+        glow(g, bar, tf::acc, 0.f, 4.f, 0.1f);
         g.setColour(tf::acc);
     }
     else
@@ -799,17 +823,6 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
     }
     g.setColour(tf::dim);
     g.drawText(e.group, t, juce::Justification::centredLeft, true);
-}
-
-void ToneForgeEditor::mouseMove(const juce::MouseEvent& e)
-{
-    const auto p = e.getEventRelativeTo(&list).position.toInt();
-    const int r = list.getLocalBounds().contains(p)
-                    ? list.getRowContainingPosition(p.x, p.y) : -1;
-    if (r == hoverRow)
-        return;
-    list.repaintRow(hoverRow);
-    list.repaintRow(hoverRow = r);
 }
 
 void ToneForgeEditor::listBoxItemClicked(int row, const juce::MouseEvent& m)
@@ -934,8 +947,9 @@ void ToneForgeEditor::selectBlock(int i)
         kn->label.setColour(juce::Label::textColourId, tf::ink);
         kn->label.setFont(juce::FontOptions(12.f, juce::Font::bold));
         kn->slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        kn->slider.setColour(juce::Slider::textBoxTextColourId, tf::ink);
-        kn->slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);   // valeur dessinée au centre
+        kn->slider.setColour(juce::Slider::textBoxTextColourId, tf::txt);
+        kn->slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+        kn->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 20);   // placée au centre par TfLook::getSliderLayout
         kn->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, d.ids[k], kn->slider);
         const int dec = proc.apvts.getParameterRange(d.ids[k]).end <= 1.f ? 2 : 1;
         kn->slider.textFromValueFunction = [dec](double v) { return juce::String(v, dec); };
@@ -947,7 +961,7 @@ void ToneForgeEditor::selectBlock(int i)
         kn->slider.updateText();
         const auto id = d.ids[k];
         kn->rc.fn = [this, id] { macroMenu(id); };
-        kn->slider.addMouseListener(&kn->rc, false);
+        kn->slider.addMouseListener(&kn->rc, true);   // aussi sur la valeur au centre
         if (proc.macroTree().getChildWithProperty("id", id).isValid())   // réglage piloté par la macro
         {
             kn->label.setText(d.labels[k] + u8(" ◆"), juce::dontSendNotification);
@@ -973,19 +987,15 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
     const auto col = pedalColour(index).brighter(0.12f * hov);
     const auto r = getLocalBounds().toFloat().reduced(5.f, 4.f).translated(0.f, -2.f * hov + 1.f);   // se soulève au survol
 
-    for (int i = 1; i <= 3; ++i)   // ombre douce, plus étalée quand le bloc est soulevé
+    for (int i = 1; i <= 3; ++i)   // ombre douce, plus étalée quand le bloc est soulevé (reste dans les bornes)
     {
         g.setColour(Colours::black.withAlpha(0.16f));
-        g.fillRoundedRectangle(r.translated(0.f, 2.f + 1.5f * hov).expanded((float) i * (0.8f + hov * 0.6f)), 12.f + (float) i);
+        g.fillRoundedRectangle(r.translated(0.f, 1.f + hov).expanded((float) i * (0.5f + hov * 0.3f)), 12.f + (float) i);
     }
-    if (selA > 0.f)
-        for (int i = 1; i <= 3; ++i)
-        {
-            g.setColour(tf::acc.withAlpha(0.16f * (float) (4 - i) * selA));
-            g.drawRoundedRectangle(r.expanded((float) i), 12.f + (float) i, 2.f);
-        }
     juce::Path body;
     body.addRoundedRectangle(r, 12.f);
+    if (selA > 0.f)
+        glow(g, body, tf::acc, 2.f, 2.f, 0.16f * selA);
     g.setGradientFill(juce::ColourGradient(col.brighter(0.25f), 0, r.getY(), col.darker(0.45f), 0, r.getBottom(), false));
     g.fillPath(body);
     if (index == kAmp)   // ampli : tolex noir à liseré or
@@ -1050,9 +1060,9 @@ void ToneForgeEditor::timerCallback()
     fall(levelIn, proc.inPeak);
     fall(levelOut, proc.outPeak);
     updateLooper();
-    // Aiguilles avec inertie, comme un vrai VU
-    needleIn += (juce::Decibels::gainToDecibels(levelIn, -60.f) - needleIn) * 0.3f;
-    needleOut += (juce::Decibels::gainToDecibels(levelOut, -60.f) - needleOut) * 0.3f;
+    // Vumètres LED : crête réelle, sans inertie (levelIn retombe déjà de 15 % par image)
+    needleIn = juce::Decibels::gainToDecibels(levelIn, -60.f);
+    needleOut = juce::Decibels::gainToDecibels(levelOut, -60.f);
     auto holdPeak = [](float& h, int& t, float db)
     {
         if (db >= h)
@@ -1107,8 +1117,17 @@ void ToneForgeEditor::timerCallback()
         if (ch)
             b->repaint();
     }
-    pulse = std::fmod(pulse + 1.f / 36.f, 1.f);
-    repaint(cableStrip());
+    if (isShowing())   // fenêtre réduite ou cachée : rien à animer
+    {
+        pulse = std::fmod(pulse + 1.f / 36.f, 1.f);
+        repaint(cableStrip());
+    }
+    const auto mp = list.getMouseXYRelative();
+    if (const int hr = list.isMouseOver(true) ? list.getRowContainingPosition(mp.x, mp.y) : -1; hr != hoverRow)
+    {
+        list.repaintRow(hoverRow);
+        list.repaintRow(hoverRow = hr);
+    }
 }
 
 juce::Rectangle<int> ToneForgeEditor::cableStrip() const
@@ -1212,11 +1231,8 @@ void ToneForgeEditor::renderBackground()
     const auto ink = plateCol.getPerceivedBrightness() > 0.5f ? tf::ink : tf::cream;
     panelTitle.setColour(juce::Label::textColourId, ink);
     bypass.setColour(juce::ToggleButton::textColourId, ink);
-    for (auto& k : knobs)
-    {
+    for (auto& k : knobs)   // la valeur reste claire : elle est sur le disque sombre de la molette
         k->label.setColour(juce::Label::textColourId, ink);
-        k->slider.setColour(juce::Slider::textBoxTextColourId, ink);
-    }
 
     const auto gr = grilleArea.toFloat();
     grille(g, gr, selected == kCab ? Colour(0xff3a2c1c) : sk.grille);
@@ -1277,7 +1293,7 @@ void ToneForgeEditor::paint(juce::Graphics& g)
         g.setFont(juce::FontOptions(10.f, juce::Font::bold));
         g.drawText(lbl, head, juce::Justification::centredLeft);
         g.setColour(hold > -3.f ? tf::bad : tf::txt);
-        g.setFont(juce::FontOptions("Cascadia Mono", 10.f, juce::Font::plain));
+        g.setFont(juce::FontOptions(monoFont(), 10.f, juce::Font::plain));
         g.drawText(hold <= -59.f ? juce::String("-inf") : juce::String(hold, 1), head, juce::Justification::centredRight);
         in.removeFromTop(4.f);
         constexpr int n = 16;
