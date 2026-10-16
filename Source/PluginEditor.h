@@ -47,8 +47,18 @@ private:
         void paint(juce::Graphics&) override;
         void mouseUp(const juce::MouseEvent&) override;
     };
+    struct RightClick : juce::MouseListener
+    {
+        std::function<void()> fn;
+        void mouseDown(const juce::MouseEvent& e) override
+        {
+            if (e.mods.isPopupMenu() && fn)
+                fn();
+        }
+    };
     struct Knob
     {
+        RightClick rc;   // en premier : détruit après la molette qui l'écoute
         juce::Slider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
         juce::Label label;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
@@ -126,6 +136,10 @@ private:
     std::vector<float> tunerBuf;
     juce::TextButton loopBtn, loopStopBtn, metroBtn;   // looper + métronome (haut de la grille)
     void updateLooper();
+    juce::Slider macroSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
+    juce::Label macroLbl;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> macroAtt;
+    void macroMenu(const juce::String& id);
 
     // Mode « Son IA » : demande en texte libre -> capture, IR et réglages choisis par OpenRouter
     juce::TextButton aiBtn, aiGo, aiClose { "Fermer" };

@@ -36,4 +36,5 @@ Fonctions inspirées d'AmpliTube 5 (vues en rétro-ingénierie, cf. `C:\dev\ampl
 - [x] Test (2026-10-15)
 
 ### 7. Macro Min/Max/Courbe (modèle : `<MidiAssignments>` Min/Max/Curve)
-- Une molette qui pilote plusieurs paramètres, chacun avec sa plage et sa courbe
+- [x] Curseur MACRO en haut de la grille (paramètre `macro`, automatisable) ; clic droit sur une molette : ajouter, Min/Max = position actuelle, courbe linéaire/lente/rapide, retirer ; ◆ sur les molettes pilotées ; cibles sauvées dans l'état (2026-10-15, compilé)
+- [x] Test (2026-10-15)

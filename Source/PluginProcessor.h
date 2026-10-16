@@ -75,6 +75,11 @@ public:
     std::atomic<float> metroBpm { 120.f };
     int loopMax() const { return loopBuf.getNumSamples(); }
 
+    // Macro (modèle : <MidiAssignments> Min/Max/Curve d'AmpliTube) : le paramètre « macro » pilote plusieurs
+    // paramètres, chacun entre son min et son max (valeurs normalisées) selon sa courbe (0 linéaire, 1 lente, 2 rapide).
+    // Cibles = enfants « T » (id, min, max, curve) de l'arbre « Macro » de l'état : sauvées avec le preset.
+    juce::ValueTree macroTree() { return apvts.state.getOrCreateChildWithName("Macro", nullptr); }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
     void updateEq();
@@ -126,6 +131,7 @@ private:
     float ring[kRing] {};
     std::atomic<int> ringPos { 0 };
     int maxBlock = 512;
+    float lastMacro = -1.f;
     juce::AudioBuffer<float> loopBuf;   // 2 canaux, 60 s
     int clickPos = 1 << 30, clickBeat = 0;
     double sinceBeat = 1e9;

@@ -490,6 +490,16 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     for (auto* b : { &loopBtn, &loopStopBtn, &metroBtn })
         addAndMakeVisible(b);
     updateLooper();
+    // Macro : une molette pour plusieurs réglages (clic droit sur une molette pour l'y ajouter)
+    macroLbl.setText("MACRO", juce::dontSendNotification);
+    macroLbl.setFont(juce::FontOptions(12.f, juce::Font::bold));
+    macroLbl.setColour(juce::Label::textColourId, tf::txt);
+    macroSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 22);
+    macroSlider.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100)) + " %"; };
+    macroSlider.setTooltip(u8("Clic droit sur une molette : l'ajouter à la macro, régler son min/max/courbe"));
+    macroAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, "macro", macroSlider);
+    addAndMakeVisible(macroLbl);
+    addAndMakeVisible(macroSlider);
 
     // Son IA
     aiBtn.setButtonText(u8("✦ Son IA"));
@@ -834,6 +844,14 @@ void ToneForgeEditor::selectBlock(int i)
             kn->slider.valueFromTextFunction = [this](const juce::String& t) { return delayNorm(t.getDoubleValue(), proc.getSampleRate()); };
         }
         kn->slider.updateText();
+        const auto id = d.ids[k];
+        kn->rc.fn = [this, id] { macroMenu(id); };
+        kn->slider.addMouseListener(&kn->rc, false);
+        if (proc.macroTree().getChildWithProperty("id", id).isValid())   // réglage piloté par la macro
+        {
+            kn->label.setText(d.labels[k] + u8(" ◆"), juce::dontSendNotification);
+            kn->label.setColour(juce::Label::textColourId, Colour(0xff0b6f8a));
+        }
         addAndMakeVisible(kn->slider);
         addAndMakeVisible(kn->label);
         knobs.push_back(std::move(kn));
@@ -1244,6 +1262,8 @@ void ToneForgeEditor::resized()
         loopBtn.setBounds(lr.removeFromRight(170));
         lr.removeFromRight(6);
         metroBtn.setBounds(lr.removeFromRight(100));
+        macroLbl.setBounds(lr.removeFromLeft(56));
+        macroSlider.setBounds(lr.removeFromLeft(juce::jmin(260, lr.getWidth() - 10)));
     }
 
     // Panneau IA par-dessus la façade
@@ -1256,7 +1276,8 @@ void ToneForgeEditor::resized()
     panelInfo.setVisible(!aiOpen);
     bypass.setVisible(!aiOpen && defs[selected].onId.isNotEmpty());
     presetBtn.setVisible(!aiOpen);
-    for (auto* b : { &loopBtn, &loopStopBtn, &metroBtn })
+    for (auto* b : { (juce::Component*) &loopBtn, (juce::Component*) &loopStopBtn, (juce::Component*) &metroBtn,
+                     (juce::Component*) &macroSlider, (juce::Component*) &macroLbl })
         b->setVisible(!aiOpen);
     tapBtn.setVisible(!aiOpen && blockKey(selected) == "delay");
     for (auto* c : { (juce::Component*) &aiPrompt, (juce::Component*) &aiGo, (juce::Component*) &aiClose, (juce::Component*) &aiOut })
@@ -1695,4 +1716,55 @@ void ToneForgeEditor::updateLooper()
             metroBtn.setToggleState(proc.metroOn, juce::dontSendNotification);
         }
     }
+}
+
+// Macro : clic droit sur une molette. Min / Max = position actuelle de la molette, comme Min/Max d'AmpliTube.
+void ToneForgeEditor::macroMenu(const juce::String& id)
+{
+    auto* p = proc.apvts.getParameter(id);
+    if (!p)
+        return;
+    auto mt = proc.macroTree();
+    auto t = mt.getChildWithProperty("id", id);
+    auto txt = [p](const juce::var& v) { return p->getText((float) v, 12) + " " + p->getLabel(); };
+    juce::PopupMenu m, curve;
+    m.addSectionHeader("Macro : " + p->getName(64));
+    if (!t.isValid())
+        m.addItem(1, u8("Ajouter à la macro (min = position actuelle)"));
+    else
+    {
+        m.addItem(2, "Min = position actuelle (" + txt(t["min"]) + ")");
+        m.addItem(3, "Max = position actuelle (" + txt(t["max"]) + ")");
+        const int c = t["curve"];
+        curve.addItem(10, u8("Linéaire"), true, c == 0);
+        curve.addItem(11, "Lente (fin de course)", true, c == 1);
+        curve.addItem(12, u8("Rapide (début de course)"), true, c == 2);
+        m.addSubMenu("Courbe", curve);
+        m.addItem(4, "Retirer de la macro");
+    }
+    if (mt.getNumChildren() > 0)
+        m.addItem(5, "Vider la macro (" + juce::String(mt.getNumChildren()) + u8(" réglages)"));
+    m.showMenuAsync(juce::PopupMenu::Options().withMousePosition(), [this, p, id, mt, t](int r) mutable
+    {
+        const float now = p->getValue();
+        if (r == 1)
+        {
+            juce::ValueTree n("T");
+            n.setProperty("id", id, nullptr).setProperty("min", now, nullptr)
+                .setProperty("max", now < 0.5f ? 1.f : 0.f, nullptr).setProperty("curve", 0, nullptr);
+            mt.appendChild(n, nullptr);
+        }
+        else if (r == 2 || r == 3)
+            t.setProperty(r == 2 ? "min" : "max", now, nullptr);
+        else if (r >= 10)
+            t.setProperty("curve", r - 10, nullptr);
+        else if (r == 4)
+            mt.removeChild(t, nullptr);
+        else if (r == 5)
+            mt.removeAllChildren(nullptr);
+        else
+            return;
+        dirty = true;
+        selectBlock(selected);   // libellés ◆ à jour
+    });
 }

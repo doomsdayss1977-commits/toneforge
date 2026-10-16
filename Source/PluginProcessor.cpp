@@ -33,7 +33,7 @@ ToneForgeProcessor::ToneForgeProcessor()
         spareReady[k] = false;
     lastOn.assign(fx.size(), 0);
     timerCallback();
-    startTimer(250);
+    startTimer(30);   // la macro suit la molette sans saccade
     if (wrapperType == wrapperType_Standalone)   // un seul serveur : pas d'instance de scan ni de doublon dans l'hôte
         osc = std::make_unique<OscServer>(*this);
 }
@@ -48,6 +48,19 @@ void ToneForgeProcessor::timerCallback()
         {
             spare[k].reset(defs[k].make(nullptr));   // détruit aussi l'ancienne instance usée
             spareReady[k].store(true, std::memory_order_release);
+        }
+    // Macro : applique les cibles quand sa valeur change (thread de messages, comme un geste d'interface)
+    const float m = apvts.getRawParameterValue("macro")->load();
+    if (m == lastMacro)
+        return;
+    lastMacro = m;
+    for (const auto& t : macroTree())
+        if (auto* p = apvts.getParameter(t["id"].toString()))
+        {
+            const int c = t["curve"];
+            const float x = c == 1 ? m * m : c == 2 ? 1.f - (1.f - m) * (1.f - m) : m;
+            const float lo = t["min"], hi = t["max"];
+            p->setValueNotifyingHost(lo + (hi - lo) * x);
         }
 }
 
@@ -83,6 +96,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
     p.push_back(std::make_unique<P>("ampb_in", u8("Ampli B entrée (dB)"), R(-24.f, 24.f), 0.f));
     p.push_back(std::make_unique<P>("ampb_out", "Ampli B sortie (dB)", R(-24.f, 24.f), 0.f));
     p.push_back(std::make_unique<P>("ab_mix", u8("Mélange A/B"), R(0.f, 1.f), 0.5f));
+    p.push_back(std::make_unique<P>("macro", "Macro", R(0.f, 1.f), 0.f));
     return { p.begin(), p.end() };
 }
 
