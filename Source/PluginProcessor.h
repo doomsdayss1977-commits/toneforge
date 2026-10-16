@@ -40,17 +40,19 @@ public:
     void setStateInformation(const void*, int) override;
 
     // Chargement depuis le thread de l'interface ; renvoie un message d'erreur vide si OK.
-    juce::String loadModel(const juce::File&, bool isPedal = false);
-    juce::String loadIR(const juce::File&);
-    juce::File modelFile, pedalFile, irFile;   // écrits sous fileLock (setStateInformation peut venir d'un autre fil)
-    juce::File loadedFile(int kind) const   // 0 ampli, 1 pédale, 2 IR ; copie sous verrou
+    juce::String loadModel(const juce::File&, bool isPedal = false, bool ampB = false);
+    juce::String loadIR(const juce::File&, bool cabB = false);
+    juce::File modelFile, pedalFile, irFile, modelBFile, irBFile;   // écrits sous fileLock (setStateInformation peut venir d'un autre fil)
+    juce::File loadedFile(int kind) const   // 0 ampli, 1 pédale, 2 IR, 3 ampli B, 4 IR B ; copie sous verrou
     {
         const juce::ScopedLock sl(fileLock);
-        return kind == 0 ? modelFile : kind == 1 ? pedalFile : irFile;
+        return kind == 0 ? modelFile : kind == 1 ? pedalFile : kind == 2 ? irFile : kind == 3 ? modelBFile : irBFile;
     }
-    juce::String modelWarning(bool isPedal = false) const   // ex. capture rééchantillonnée ; suit les changements de taux du projet
+    juce::String modelWarning(int kind = 0) const   // 0 ampli, 1 pédale, 3 ampli B ; ex. capture rééchantillonnée
     {
-        const auto& s = isPedal ? pedal : amp;
+        const auto& s = kind == 1 ? pedal : kind == 3 ? ampB : amp;
+        if (kind == 3 && !s.loaded)
+            return u8("Aucune capture B : clique un ampli dans la liste (le bloc B ne fait rien sans elle)");
         const int c = s.captureRate, p = s.projectRate;
         return c > 0 ? "Capture à " + juce::String(c) + " Hz, rééchantillonnée depuis " + juce::String(p) + " Hz"
                      : juce::String();
@@ -88,14 +90,16 @@ private:
         Resampler rs;
         std::atomic<int> captureRate { 0 }, projectRate { 0 };   // capture rééchantillonnée (0 = non), lus par l'interface
         std::atomic<bool> loaded { false };   // une capture est chargée (lu sans verrou par le thread audio)
-    } pedal, amp;
+    } pedal, amp, ampB;   // ampB : ampli B en parallèle de A
     void configureModel(nam::DSP&, NamSlot&);
     void processResampled(NamSlot&, float* x, int n);
     void runNam(NamSlot&, float* x, int n, float gainIn, float gainOut);
 
     juce::dsp::NoiseGate<float> gate;
     juce::dsp::Convolution cab { juce::dsp::Convolution::NonUniform { 256 } };
-    std::atomic<bool> irLoaded { false };
+    juce::dsp::Convolution cabB { juce::dsp::Convolution::NonUniform { 256 } };
+    std::atomic<bool> irLoaded { false }, irBLoaded { false };
+    std::vector<float> bufB;   // voie B (maxBlock)
     using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
     juce::dsp::ProcessorChain<Filter, Filter, Filter> eq;
     std::vector<std::unique_ptr<AudioEffect>> fx;   // un par entrée de fxDefs()

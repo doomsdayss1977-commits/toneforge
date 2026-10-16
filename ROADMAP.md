@@ -17,10 +17,13 @@ Fonctions inspirées d'AmpliTube 5 (vues en rétro-ingénierie, cf. `C:\dev\ampl
 - [x] YIN sur l'entrée brute, 28-1400 Hz (si grave de basse 5 cordes) ; test synthétique : 30,87 / 41,2 / 110 Hz exacts, 988 Hz à +1,4 ¢
 - [x] Test avec la guitare et la basse (2026-10-14)
 
-## À faire
+### 4. Amplis en parallèle A/B (modèle : ChainSlot Amp A/B/C + Cab A/B/C) 
+- [x] Processeur (2026-10-14, pas compilé) : slot `ampB` + `cabB`, params `ampb_on`/`ampb_in`/`ampb_out`/`ab_mix` (fondu linéaire), `loadModel(f, false, true)`, `loadIR(f, true)`, `loadedFile(3/4)`, état `modelB`/`irB`, `modelWarning(int kind)`
+- [x] Interface (2026-10-15, compilé) : bloc « Ampli B » (kAmpB = 5, après Baffle ; onId `ampb_on`, réglages Entrée/Sortie/Mélange) ; quand il est sélectionné, onglets Amplis/Baffles chargent dans B (`target(tab)` → 3/4) aux appels de `current(tab)`, `load(…, tab)`, `pick()` ; `blockOf(3|4)` = kAmpB ; `refreshLabels` et presets de bloc (fichier + IR B)
+- [x] Compiler
+- [x] Test à l'oreille (2026-10-15)
 
-### 4. Amplis en parallèle A/B (modèle : ChainSlot Amp A/B/C + Cab A/B/C)
-- Deuxième capture NAM + IR en parallèle, mélange A/B ; attention CPU (×2)
+## À faire
 
 ### 5. Recherche par étiquettes (modèle : `Presets.db` : genre, artiste, micro, caractère)
 - Étiquettes sur captures et presets, filtres dans le navigateur

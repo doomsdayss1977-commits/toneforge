@@ -131,7 +131,7 @@ void led(juce::Graphics& g, juce::Rectangle<float> r, Colour col, bool on)
 // Couleur du boîtier de chaque pédale, dans l'ordre de la chaîne.
 Colour pedalColour(int i)
 {
-    static const juce::uint32 c[] = { 0xff59606b, 0xff2a6fb8, 0xffb8322a, 0xff262626, 0xff7a4a26,
+    static const juce::uint32 c[] = { 0xff59606b, 0xff2a6fb8, 0xffb8322a, 0xff262626, 0xff7a4a26, 0xff4a3524,
                                       0xffb9bec5, 0xff7445b0, 0xff2e8b57, 0xff1b8c99 };
     return juce::isPositiveAndBelow(i, (int) std::size(c)) ? Colour(c[i]) : Colour(0xff59606b);
 }
@@ -418,6 +418,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     defs.add({ u8("Pédale"), "NAM", "pedal_on", {}, { "pedal_in", "pedal_out" }, { u8("Entrée (dB)"), "Sortie (dB)" } });
     defs.add({ "Ampli", "NAM", {}, {}, { "input", "output" }, { u8("Entrée (dB)"), "Sortie (dB)" } });
     defs.add({ "Baffle", "IR", "ir_on", {}, {}, {} });
+    defs.add({ "Ampli B", "NAM", "ampb_on", {}, { "ampb_in", "ampb_out", "ab_mix" }, { u8("Entrée (dB)"), "Sortie (dB)", u8("Mélange A/B") } });
     defs.add({ "EQ", u8("TONALITÉ"), {}, "Graves 120 Hz, Médiums 800 Hz, Aigus 3,5 kHz", { "bass", "mid", "treble" },
                { "Graves", u8("Médiums"), "Aigus" } });
     for (size_t i = 1; i < fx.size(); ++i)
@@ -578,13 +579,13 @@ void ToneForgeEditor::rebuildBrands()
                 o->setToggleState(o->getButtonText() == (brandFilter.isEmpty() ? juce::String("Toutes") : brandFilter), juce::dontSendNotification);
             filterList();
             // Charge la 1re capture de la marque, sauf si celle en cours en est déjà
-            const auto cur = current(tab);
+            const auto cur = current(target(tab));
             const auto& src = lib();
             if (brandFilter.isNotEmpty() && std::none_of(src.begin(), src.end(), [&](const Entry& e) { return e.file == cur && e.brand == brandFilter; }))
                 for (const auto& e : shown)   // parmi les captures visibles (recherche comprise)
                     if (e.file != juce::File())
                     {
-                        load(e.file, tab);
+                        load(e.file, target(tab));
                         break;
                     }
         };
@@ -637,7 +638,7 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
         g.fillRect(t.getX(), t.getBottom() - 1, t.getWidth(), 1);
         return;
     }
-    const bool isCurrent = e.file == current(tab);
+    const bool isCurrent = e.file == current(target(tab));
     const auto r = juce::Rectangle<int>(0, 0, w, h).toFloat().reduced(3.f, 2.f);
     g.setGradientFill(juce::ColourGradient(juce::Colour(0xff272b32), 0, r.getY(), juce::Colour(0xff1b1e23), 0, r.getBottom(), false));
     g.fillRoundedRectangle(r, 7.f);
@@ -676,7 +677,7 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
 void ToneForgeEditor::listBoxItemClicked(int row, const juce::MouseEvent&)
 {
     if (juce::isPositiveAndBelow(row, shown.size()) && shown[row].file != juce::File())
-        load(shown[row].file, tab);
+        load(shown[row].file, target(tab));
 }
 
 void ToneForgeEditor::load(const juce::File& f, int kind)
@@ -686,12 +687,14 @@ void ToneForgeEditor::load(const juce::File& f, int kind)
         selectBlock(blockOf(kind));   // déjà chargé : pas de rechargement
         return;
     }
-    const auto err = kind == 2 ? proc.loadIR(f) : proc.loadModel(f, kind == 1);
+    const auto err = kind == 2 || kind == 4 ? proc.loadIR(f, kind == 4) : proc.loadModel(f, kind == 1, kind == 3);
     dirty = true;
     if (err.isNotEmpty())
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "ToneForge", err);
     else if (kind == 1 && !blockOn(kPedal))   // choisir une pédale l'allume
         toggleBlock(kPedal);
+    else if (kind == 3 && !blockOn(kAmpB))   // choisir un ampli B l'allume
+        toggleBlock(kAmpB);
     selectBlock(blockOf(kind));
     refreshLabels();
     list.repaint();
@@ -699,10 +702,10 @@ void ToneForgeEditor::load(const juce::File& f, int kind)
 
 void ToneForgeEditor::pick()
 {
-    const int kind = tab;
-    const bool isModel = kind != 2;
+    const int kind = target(tab);
+    const bool isModel = tab != 2;
     chooser = std::make_unique<juce::FileChooser>(isModel ? "Capture NAM" : "IR de baffle",
-                                                  kRoot.getChildFile(kind == 0 ? "models" : kind == 1 ? "pedals" : "irs"),
+                                                  kRoot.getChildFile(tab == 0 ? "models" : tab == 1 ? "pedals" : "irs"),
                                                   isModel ? "*.nam" : "*.wav");
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                          [this, kind](const juce::FileChooser& fc)
@@ -715,9 +718,9 @@ void ToneForgeEditor::pick()
 void ToneForgeEditor::refreshLabels()
 {
     auto name = [](const juce::File& f) { return f == juce::File() ? juce::String("(aucun)") : f.getFileNameWithoutExtension(); };
-    const bool ped = selected == kPedal;   // l'écran montre la pédale quand son bloc est affiché
-    nameLbl.setText(name(ped ? proc.pedalFile : proc.modelFile), juce::dontSendNotification);
-    warnLbl.setText(proc.modelWarning(ped), juce::dontSendNotification);
+    const bool ped = selected == kPedal, ab = selected == kAmpB;   // l'écran montre la pédale / l'ampli B quand son bloc est affiché
+    nameLbl.setText(name(ped ? proc.pedalFile : ab ? proc.modelBFile : proc.modelFile), juce::dontSendNotification);
+    warnLbl.setText(proc.modelWarning(ped ? 1 : ab ? 3 : 0), juce::dontSendNotification);
     if (selected == kAmp)
         panelInfo.setText(proc.modelFile.getFullPathName(), juce::dontSendNotification);
     else if (ped)
@@ -726,6 +729,11 @@ void ToneForgeEditor::refreshLabels()
     else if (selected == kCab)
         panelInfo.setText(proc.irFile == juce::File() ? juce::String("Aucune IR : choisis-en une dans Baffles.")
                                                       : proc.irFile.getFullPathName(), juce::dontSendNotification);
+    else if (ab)
+        panelInfo.setText(proc.modelBFile == juce::File() ? u8("Choisis l'ampli B dans Amplis et son IR dans Baffles (bloc Ampli B affiché).")
+                                                          : proc.modelBFile.getFullPathName() + "\n"
+                                                                + (proc.irBFile == juce::File() ? juce::String("(sans IR)") : proc.irBFile.getFullPathName()),
+                          juce::dontSendNotification);
     else
         panelInfo.setText(defs[selected].info, juce::dontSendNotification);
 }
@@ -734,7 +742,7 @@ void ToneForgeEditor::refreshLabels()
 bool ToneForgeEditor::blockOn(int i) const
 {
     const auto& d = defs.getReference(i);
-    if (i == kPedal && proc.pedalFile == juce::File())
+    if ((i == kPedal && proc.pedalFile == juce::File()) || (i == kAmpB && proc.modelBFile == juce::File()))
         return false;
     if (d.onId.isNotEmpty())
         return proc.apvts.getRawParameterValue(d.onId)->load() > 0.5f;
@@ -747,6 +755,8 @@ void ToneForgeEditor::toggleBlock(int i)
 {
     if (i == kPedal && proc.pedalFile == juce::File())   // rien à allumer : ouvrir la liste des pédales
         return selectBlock(kPedal);
+    if (i == kAmpB && proc.modelBFile == juce::File())   // idem : ouvrir la liste des amplis pour B
+        return selectBlock(kAmpB);
     if (auto* p = proc.apvts.getParameter(defs[i].onId))
     {
         p->beginChangeGesture();
@@ -762,6 +772,9 @@ void ToneForgeEditor::selectBlock(int i)
     selected = i;
     if (i == kAmp || i == kPedal || i == kCab)   // la liste suit le bloc NAM / IR affiché
         setTab(i == kAmp ? 0 : i == kPedal ? 1 : 2);
+    else if (i == kAmpB && tab == 1)
+        setTab(0);
+    list.repaint();   // la capture en cours change entre A et B
     const auto& d = defs.getReference(i);
     panelTitle.setText(upper(d.title), juce::dontSendNotification);
     bypassAtt.reset();
@@ -904,7 +917,7 @@ void ToneForgeEditor::timerCallback()
     {
         for (auto& b : blocks)
             b->repaint();
-        warnLbl.setText(proc.modelWarning(selected == kPedal), juce::dontSendNotification);   // le taux du projet a pu changer
+        warnLbl.setText(proc.modelWarning(selected == kPedal ? 1 : selected == kAmpB ? 3 : 0), juce::dontSendNotification);   // le taux du projet a pu changer
        #if JucePlugin_Build_Standalone
         if (auto* h = juce::StandalonePluginHolder::getInstance(); h && std::exchange(dirty, false))
             h->savePluginState();
@@ -1368,7 +1381,7 @@ juce::String ToneForgeEditor::blockKey(int i) const
     return on.isNotEmpty() ? on.upToFirstOccurrenceOf("_", false, false) : i == kAmp ? juce::String("amp") : juce::String("eq");
 }
 
-static int kindOf(int block, int pedal, int amp, int cab) { return block == amp ? 0 : block == pedal ? 1 : block == cab ? 2 : -1; }
+static int kindOf(int block, int pedal, int amp, int cab, int ampB) { return block == amp ? 0 : block == pedal ? 1 : block == cab ? 2 : block == ampB ? 3 : -1; }
 
 juce::ValueTree ToneForgeEditor::captureBlock(int i) const
 {
@@ -1380,9 +1393,11 @@ juce::ValueTree ToneForgeEditor::captureBlock(int i) const
     for (auto& id : ids)
         if (auto* p = proc.apvts.getParameter(id))
             v.setProperty(juce::Identifier(id), p->convertFrom0to1(p->getValue()), nullptr);
-    const int kind = kindOf(i, kPedal, kAmp, kCab);
+    const int kind = kindOf(i, kPedal, kAmp, kCab, kAmpB);
     if (kind >= 0 && proc.loadedFile(kind) != juce::File())
         v.setProperty("file", proc.loadedFile(kind).getFullPathName(), nullptr);
+    if (kind == 3 && proc.irBFile != juce::File())
+        v.setProperty("irB", proc.irBFile.getFullPathName(), nullptr);
     return v;
 }
 
@@ -1390,10 +1405,12 @@ void ToneForgeEditor::applyBlock(int i, const juce::ValueTree& v)
 {
     if (!v.hasType(juce::Identifier(blockKey(i))))
         return;
-    const int kind = kindOf(i, kPedal, kAmp, kCab);
+    const int kind = kindOf(i, kPedal, kAmp, kCab, kAmpB);
     const juce::File f(v.getProperty("file").toString());
     if (kind >= 0 && f.existsAsFile())
         load(f, kind);   // d'abord la capture : charger une pédale l'allume
+    if (const juce::File ir(v.getProperty("irB").toString()); kind == 3 && ir.existsAsFile())
+        load(ir, 4);
     for (int k = 0; k < v.getNumProperties(); ++k)
     {
         const auto id = v.getPropertyName(k);

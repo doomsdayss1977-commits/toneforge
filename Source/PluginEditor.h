@@ -74,8 +74,10 @@ private:
     void toggleBlock(int i);
     // Bibliothèques : 0 = amplis, 1 = pédales, 2 = baffles (IR)
     const juce::Array<Entry>& lib() const { return tab == 0 ? models : tab == 1 ? pedals : irs; }
-    juce::File current(int kind) const { return kind == 0 ? proc.modelFile : kind == 1 ? proc.pedalFile : proc.irFile; }
-    static int blockOf(int kind) { return kind == 0 ? kAmp : kind == 1 ? kPedal : kCab; }
+    // 3 = ampli B, 4 = IR B : les onglets Amplis/Baffles chargent dans B quand son bloc est affiché
+    juce::File current(int kind) const { return proc.loadedFile(kind); }
+    static int blockOf(int kind) { return kind == 0 ? kAmp : kind == 1 ? kPedal : kind == 2 ? kCab : kAmpB; }
+    int target(int t) const { return selected == kAmpB && t != 1 ? (t == 0 ? 3 : 4) : t; }
     void setTab(int t);
     void load(const juce::File&, int kind);
     void pick();
@@ -96,7 +98,7 @@ private:
     TfLook look;
     juce::Array<BlockDef> defs;
     std::vector<std::unique_ptr<Block>> blocks;
-    enum { kPedal = 2, kAmp = 3, kCab = 4 };   // blocs NAM et IR dans la chaîne
+    enum { kPedal = 2, kAmp = 3, kCab = 4, kAmpB = 5 };   // blocs NAM et IR dans la chaîne
     int selected = kAmp;
 
     juce::TextEditor search;
