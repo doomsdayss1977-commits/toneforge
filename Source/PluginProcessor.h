@@ -55,7 +55,8 @@ public:
         if (kind == 3 && !s.loaded)
             return u8("Aucune capture B : clique un ampli dans la liste (le bloc B ne fait rien sans elle)");
         const int c = s.captureRate, p = s.projectRate;
-        return c > 0 ? "Capture à " + juce::String(c) + " Hz, rééchantillonnée depuis " + juce::String(p) + " Hz"
+        return c > 0 ? u8("Capture à ") + juce::String(c / 1000.0, 1) + u8(" kHz, projet à ") + juce::String(p / 1000.0, 1)
+                           + u8(" kHz : rééchantillonnée")
                      : juce::String();
     }
 

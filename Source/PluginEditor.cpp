@@ -450,6 +450,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     countLbl.setFont(12.f);
     addAndMakeVisible(countLbl);
     list.setRowHeight(46);
+    list.getViewport()->setScrollBarsShown(false, false, true, false);   // défilement à la molette, sans barre (son curseur minuscule semblait parasite)
     addAndMakeVisible(list);
 
     // Écran LCD, plaque et grille
@@ -494,10 +495,12 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     macroLbl.setText("MACRO", juce::dontSendNotification);
     macroLbl.setFont(juce::FontOptions(12.f, juce::Font::bold));
     macroLbl.setColour(juce::Label::textColourId, tf::txt);
-    macroSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 22);
-    macroSlider.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100)) + " %"; };
+    macroSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 22);
     macroSlider.setTooltip(u8("Clic droit sur une molette : l'ajouter à la macro, régler son min/max/courbe"));
     macroAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, "macro", macroSlider);
+    macroSlider.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100)) + " %"; };   // après l'attache, qui impose le sien
+    macroSlider.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue() / 100.0; };
+    macroSlider.updateText();
     addAndMakeVisible(macroLbl);
     addAndMakeVisible(macroSlider);
 
@@ -533,7 +536,7 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     proc.apvts.state.addListener(this);
     selectBlock(selected);
     refreshLabels();
-    setSize(1200, 720);
+    setSize(1300, 720);
     startTimerHz(30);
 }
 
@@ -762,18 +765,20 @@ void ToneForgeEditor::refreshLabels()
     const bool ped = selected == kPedal, ab = selected == kAmpB;   // l'écran montre la pédale / l'ampli B quand son bloc est affiché
     nameLbl.setText(name(ped ? proc.pedalFile : ab ? proc.modelBFile : proc.modelFile), juce::dontSendNotification);
     warnLbl.setText(proc.modelWarning(ped ? 1 : ab ? 3 : 0), juce::dontSendNotification);
+    // Chemin court : relatif à la bibliothèque quand la capture en vient
+    auto path = [](const juce::File& f) { return f.isAChildOf(kRoot) ? f.getRelativePathFrom(kRoot).replaceCharacter('\\', '/') : f.getFullPathName(); };
     if (selected == kAmp)
-        panelInfo.setText(proc.modelFile.getFullPathName(), juce::dontSendNotification);
+        panelInfo.setText(path(proc.modelFile), juce::dontSendNotification);
     else if (ped)
         panelInfo.setText(proc.pedalFile == juce::File() ? u8("Aucune pédale : choisis-en une dans Pédales.")
-                                                         : proc.pedalFile.getFullPathName(), juce::dontSendNotification);
+                                                         : path(proc.pedalFile), juce::dontSendNotification);
     else if (selected == kCab)
         panelInfo.setText(proc.irFile == juce::File() ? juce::String("Aucune IR : choisis-en une dans Baffles.")
-                                                      : proc.irFile.getFullPathName(), juce::dontSendNotification);
+                                                      : path(proc.irFile), juce::dontSendNotification);
     else if (ab)
         panelInfo.setText(proc.modelBFile == juce::File() ? u8("Choisis l'ampli B dans Amplis et son IR dans Baffles (bloc Ampli B affiché).")
-                                                          : proc.modelBFile.getFullPathName() + "\n"
-                                                                + (proc.irBFile == juce::File() ? juce::String("(sans IR)") : proc.irBFile.getFullPathName()),
+                                                          : path(proc.modelBFile) + u8("  ·  ")
+                                                                + (proc.irBFile == juce::File() ? juce::String("(sans IR)") : path(proc.irBFile)),
                           juce::dontSendNotification);
     else
         panelInfo.setText(defs[selected].info, juce::dontSendNotification);
@@ -1184,7 +1189,7 @@ void ToneForgeEditor::resized()
         tunerBtn.setBounds(juce::Rectangle<int>(130, 34).withCentre({ lcdArea.getX() - 85, topBar.getCentreY() }));
     }
 
-    auto side = r.removeFromLeft(260).reduced(12);
+    auto side = r.removeFromLeft(360).reduced(12);   // assez large pour les noms de captures
     search.setBounds(side.removeFromTop(34));
     side.removeFromTop(8);
     auto tabs = side.removeFromTop(28);
@@ -1689,7 +1694,7 @@ void ToneForgeEditor::updateLooper()
     const int st = proc.loopState;
     const double sr = proc.getSampleRate() > 0 ? proc.getSampleRate() : 48000.0;
     const auto secs = juce::String((st == P::loopRec ? proc.loopPos.load() : proc.loopLen.load()) / sr, 1) + " s";
-    const juce::String txt = st == P::loopEmpty ? u8("⏺ Boucle")
+    const juce::String txt = st == P::loopEmpty ? u8("● Boucle")   // ● et non ⏺ : Windows le rend en emoji bleu
                            : st == P::loopRec   ? u8("● Enreg. ") + secs
                            : st == P::loopPlay  ? u8("▶ Lecture ") + secs
                            : st == P::loopDub   ? u8("● Superpos. ") + secs
