@@ -26,7 +26,9 @@ Fonctions inspirées d'AmpliTube 5 (vues en rétro-ingénierie, cf. `C:\dev\ampl
 ## À faire
 
 ### 5. Recherche par étiquettes (modèle : `Presets.db` : genre, artiste, micro, caractère)
-- Étiquettes sur captures et presets, filtres dans le navigateur
+- [x] Clic droit sur une capture : cocher des étiquettes (genre, caractère, Favori…) ou en créer ; stockées dans `tags.json` de la bibliothèque (2026-10-15, compilé)
+- [x] Affichées en #cyan sur la ligne ; la recherche les trouve ; « Filtrer par étiquette » remplit la recherche
+- [x] Test (2026-10-15)
 
 ### 6. Looper + métronome (modèle : `LOOP1/2`, `Looper_Metronome`)
 - Enregistrer / superposer / lire une boucle, clic au tempo du Tap

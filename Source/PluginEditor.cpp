@@ -543,6 +543,12 @@ void ToneForgeEditor::scanLibrary()
                   });
         return out;
     };
+    tagMap.clear();
+    if (auto* o = juce::JSON::parse(kRoot.getChildFile("tags.json")).getDynamicObject())
+        for (const auto& kv : o->getProperties())
+            if (auto* a = kv.value.getArray())
+                for (const auto& t : *a)
+                    tagMap[kv.name.toString()].add(t.toString());
     models = scan("models", "*.nam");
     pedals = scan("pedals", "*.nam", true);
     irs = scan("irs", "*.wav");
@@ -603,7 +609,7 @@ void ToneForgeEditor::filterList()
     juce::String last;
     for (const auto& e : lib())
         if ((brandFilter.isEmpty() || e.brand == brandFilter)
-            && (q.isEmpty() || (e.group + " " + e.name + " " + e.brand).containsIgnoreCase(q)))
+            && (q.isEmpty() || (e.group + " " + e.name + " " + e.brand + " " + tagsOf(e.file).joinIntoString(" ")).containsIgnoreCase(q)))
         {
             if (e.brand != last)
                 shown.add({ {}, {}, e.brand, e.brand });   // en-tête de marque
@@ -669,13 +675,22 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
     g.setColour(tf::txt);
     g.setFont(juce::FontOptions(13.f, juce::Font::bold));
     g.drawText(e.name, t.removeFromTop(19), juce::Justification::centredLeft, true);
-    g.setColour(tf::dim);
     g.setFont(11.f);
+    if (const auto tg = tagsOf(e.file); !tg.isEmpty())
+    {
+        const auto s = "#" + tg.joinIntoString(" #");
+        g.setColour(tf::acc2);
+        g.drawText(s, t.removeFromRight(juce::jmin(t.getWidth() / 2, juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), s) + 4)),
+                   juce::Justification::centredRight, true);
+    }
+    g.setColour(tf::dim);
     g.drawText(e.group, t, juce::Justification::centredLeft, true);
 }
 
-void ToneForgeEditor::listBoxItemClicked(int row, const juce::MouseEvent&)
+void ToneForgeEditor::listBoxItemClicked(int row, const juce::MouseEvent& m)
 {
+    if (m.mods.isPopupMenu())
+        return tagMenu(row);
     if (juce::isPositiveAndBelow(row, shown.size()) && shown[row].file != juce::File())
         load(shown[row].file, target(tab));
 }
@@ -1531,4 +1546,88 @@ void ToneForgeEditor::updateTuner()
     const auto col = inTune ? tf::ok : std::abs(cents) <= 15 ? tf::warn : tf::bad;
     nameLbl.setColour(juce::Label::textColourId, col);
     warnLbl.setColour(juce::Label::textColourId, col.withAlpha(0.85f));
+}
+
+//==============================================================================
+// Étiquettes (modèle : Presets.db d'AmpliTube : genre, caractère…), clic droit sur une capture.
+static juce::String tagKey(const juce::File& f) { return f.getRelativePathFrom(kRoot).replaceCharacter('\\', '/'); }
+
+juce::StringArray ToneForgeEditor::tagsOf(const juce::File& f) const
+{
+    const auto it = tagMap.find(tagKey(f));
+    return it != tagMap.end() ? it->second : juce::StringArray();
+}
+
+void ToneForgeEditor::saveTags() const
+{
+    auto* o = new juce::DynamicObject();
+    for (const auto& [k, v] : tagMap)
+        if (!v.isEmpty())
+        {
+            juce::Array<juce::var> a;
+            for (const auto& t : v)
+                a.add(t);
+            o->setProperty(k, a);
+        }
+    kRoot.getChildFile("tags.json").replaceWithText(juce::JSON::toString(juce::var(o)));
+}
+
+void ToneForgeEditor::tagMenu(int row)
+{
+    juce::StringArray all { "Clean", "Crunch", "High gain", "Metal", "Rock", "Blues", "Jazz", "Funk", "Basse",
+                            "Chaud", "Brillant", "Sombre", "Favori" };
+    for (const auto& [k, v] : tagMap)
+        all.addArray(v);
+    all.removeDuplicates(true);
+    all.sortNatural();
+    const bool onRow = juce::isPositiveAndBelow(row, shown.size()) && shown[row].file != juce::File();
+    const auto f = onRow ? shown[row].file : juce::File();
+    const auto mine = tagsOf(f);
+    juce::PopupMenu m, filt;
+    if (onRow)
+    {
+        m.addSectionHeader(shown[row].name);
+        for (int i = 0; i < all.size(); ++i)
+            m.addItem(1 + i, all[i], true, mine.contains(all[i]));
+        m.addItem(1000, u8("Nouvelle étiquette..."));
+        m.addSeparator();
+    }
+    juce::StringArray used;
+    for (const auto& [k, v] : tagMap)
+        used.addArray(v);
+    used.removeDuplicates(true);
+    used.sortNatural();
+    for (int i = 0; i < used.size(); ++i)
+        filt.addItem(2000 + i, "#" + used[i]);
+    m.addSubMenu(u8("Filtrer par étiquette"), filt, !used.isEmpty());
+    m.showMenuAsync(juce::PopupMenu::Options().withMousePosition(), [this, f, all, used](int r)
+    {
+        auto toggle = [this, f](const juce::String& t)
+        {
+            auto& v = tagMap[tagKey(f)];
+            if (v.contains(t))
+                v.removeString(t);
+            else
+                v.add(t);
+            saveTags();
+            filterList();
+        };
+        if (r >= 2000)
+            search.setText(used[r - 2000]);   // onTextChange refiltre
+        else if (r == 1000)
+        {
+            auto* w = new juce::AlertWindow(u8("Nouvelle étiquette"), {}, juce::MessageBoxIconType::NoIcon);
+            w->addTextEditor("t", {});
+            w->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            w->addButton("Annuler", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            w->enterModalState(true, juce::ModalCallbackFunction::create([w, toggle](int ok)
+            {
+                const auto t = w->getTextEditorContents("t").trim().removeCharacters("#,");
+                if (ok && t.isNotEmpty())
+                    toggle(t);
+            }), true);
+        }
+        else if (r > 0)
+            toggle(all[r - 1]);
+    });
 }

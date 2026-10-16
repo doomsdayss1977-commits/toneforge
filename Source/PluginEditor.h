@@ -93,6 +93,10 @@ private:
     void tap();
     void showTuner(bool on);
     void updateTuner();
+    // Étiquettes des captures (tags.json de la bibliothèque) : genre, caractère, etc.
+    juce::StringArray tagsOf(const juce::File&) const;
+    void saveTags() const;
+    void tagMenu(int row);
 
     ToneForgeProcessor& proc;
     TfLook look;
@@ -109,6 +113,7 @@ private:
     int tab = 0;
     juce::OwnedArray<juce::TextButton> brandBtns;   // filtre par marque (« Toutes » en premier)
     juce::String brandFilter;
+    std::map<juce::String, juce::StringArray> tagMap;   // chemin relatif à la bibliothèque -> étiquettes
 
     juce::ToggleButton bypass;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt;
