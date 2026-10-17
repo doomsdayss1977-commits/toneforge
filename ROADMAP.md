@@ -38,3 +38,16 @@ Fonctions inspirées d'AmpliTube 5 (vues en rétro-ingénierie, cf. `C:\dev\ampl
 ### 7. Macro Min/Max/Courbe (modèle : `<MidiAssignments>` Min/Max/Curve)
 - [x] Curseur MACRO en haut de la grille (paramètre `macro`, automatisable) ; clic droit sur une molette : ajouter, Min/Max = position actuelle, courbe linéaire/lente/rapide, retirer ; ◆ sur les molettes pilotées ; cibles sauvées dans l'état (2026-10-15, compilé)
 - [x] Test (2026-10-15)
+
+### 8. Interface « studio néon »
+- [x] Molettes néon (arc dégradé, halo, valeur éditable au centre) et icônes vectorielles (a73ef7c)
+- [x] Chaîne en cartes animées reliées par un câble lumineux (17c608d)
+- [x] Polices Bahnschrift / Cascadia Mono, pastilles de marque, survol de la liste, vumètres LED à crête maintenue (419d03c)
+- [x] Revue UI : 9 correctifs sur 9 (1601e4e) ; test (2026-10-15)
+
+### 9. Correctifs des revues ouvertes (2026-10-16)
+- [x] Alignement A/B : retard du rééchantillonnage mesuré au chargement, la voie la moins retardée attend l'autre (d601a25)
+- [x] Macro : `stateLock` autour de l'arbre Macro et de l'état, gestes d'automation ; clic droit ne tourne plus la molette ; clé d'étiquette en cache (d601a25)
+- [x] Rééchantillonnage : `setLatencySamples`, filtre anti-repliement elliptique, amorce selon le ratio (0929e26) ; mesuré à 12 / 44,1 / 96 kHz, aucune sous-alimentation
+- [x] VST3 installé dans `C:\Program Files\Common Files\VST3` (2026-10-16)
+- [ ] Test : clic droit sur une molette, recherche par étiquette, macro automatisée dans REAPER, projet à 44,1 kHz avec A/B
