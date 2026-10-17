@@ -80,7 +80,9 @@ public:
     // Macro (modèle : <MidiAssignments> Min/Max/Curve d'AmpliTube) : le paramètre « macro » pilote plusieurs
     // paramètres, chacun entre son min et son max (valeurs normalisées) selon sa courbe (0 linéaire, 1 lente, 2 rapide).
     // Cibles = enfants « T » (id, min, max, curve) de l'arbre « Macro » de l'état : sauvées avec le preset.
+    // Toujours sous stateLock : setStateInformation peut remplacer l'état depuis un autre fil.
     juce::ValueTree macroTree() { return apvts.state.getOrCreateChildWithName("Macro", nullptr); }
+    juce::CriticalSection stateLock;
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
@@ -104,9 +106,10 @@ private:
         Resampler rs;
         std::atomic<int> captureRate { 0 }, projectRate { 0 };   // capture rééchantillonnée (0 = non), lus par l'interface
         std::atomic<bool> loaded { false };   // une capture est chargée (lu sans verrou par le thread audio)
+        std::atomic<float> latency { 0.f };   // retard du rééchantillonnage, en échantillons du projet (mesuré)
     } pedal, amp, ampB;   // ampB : ampli B en parallèle de A
     void configureModel(nam::DSP&, NamSlot&);
-    void processResampled(NamSlot&, float* x, int n);
+    static void processResampled(Resampler&, nam::DSP*, float* x, int n);   // DSP nul = identité (mesure)
     void runNam(NamSlot&, float* x, int n, float gainIn, float gainOut);
 
     juce::dsp::NoiseGate<float> gate;
@@ -114,6 +117,8 @@ private:
     juce::dsp::Convolution cabB { juce::dsp::Convolution::NonUniform { 256 } };
     std::atomic<bool> irLoaded { false }, irBLoaded { false };
     std::vector<float> bufB;   // voie B (maxBlock)
+    // Alignement A/B : la voie la moins retardée attend l'autre (sinon filtrage en peigne au mélange)
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> alignA { 512 }, alignB { 512 };
     using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
     juce::dsp::ProcessorChain<Filter, Filter, Filter> eq;
     std::vector<std::unique_ptr<AudioEffect>> fx;   // un par entrée de fxDefs()

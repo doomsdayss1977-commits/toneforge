@@ -239,6 +239,7 @@ static double delayNorm(double ms, double sr)
 }
 
 juce::File libraryRoot() { return kRoot; }
+static juce::String tagKey(const juce::File& f) { return f.getRelativePathFrom(kRoot).replaceCharacter('\\', '/'); }
 juce::String captureBrand(const juce::String& s, bool pedal) { return brandOf(s, pedal); }
 
 // Police à chasse fixe : Cascadia Mono (Windows 11 / Terminal), sinon Consolas, présente partout.
@@ -660,7 +661,7 @@ void ToneForgeEditor::scanLibrary()
         for (const auto& f : kRoot.getChildFile(sub).findChildFiles(juce::File::findFiles, true, pattern))
         {
             const auto grp = f.getParentDirectory().getFileName(), nm = f.getFileNameWithoutExtension();
-            out.add({ f, grp, nm, brandOf(grp + " " + nm, pedal) });
+            out.add({ f, grp, nm, brandOf(grp + " " + nm, pedal), tagKey(f) });
         }
         // Par marque (« Autres » en dernier), puis par dossier et nom
         std::sort(out.begin(), out.end(), [](const Entry& a, const Entry& b)
@@ -741,7 +742,7 @@ void ToneForgeEditor::filterList()
     juce::String last;
     for (const auto& e : lib())
         if ((brandFilter.isEmpty() || e.brand == brandFilter)
-            && (q.isEmpty() || (e.group + " " + e.name + " " + e.brand + " " + tagsOf(e.file).joinIntoString(" ")).containsIgnoreCase(q)))
+            && (q.isEmpty() || (e.group + " " + e.name + " " + e.brand + " " + tagsOf(e.key).joinIntoString(" ")).containsIgnoreCase(q)))
         {
             if (e.brand != last)
                 shown.add({ {}, {}, e.brand, e.brand });   // en-tête de marque
@@ -814,7 +815,7 @@ void ToneForgeEditor::paintListBoxItem(int row, juce::Graphics& g, int w, int h,
     g.setFont(juce::FontOptions(13.f, juce::Font::bold));
     g.drawText(e.name, t.removeFromTop(19), juce::Justification::centredLeft, true);
     g.setFont(11.f);
-    if (const auto tg = tagsOf(e.file); !tg.isEmpty())
+    if (const auto tg = tagsOf(e.key); !tg.isEmpty())
     {
         const auto s = "#" + tg.joinIntoString(" #");
         g.setColour(tf::acc2);
@@ -962,7 +963,8 @@ void ToneForgeEditor::selectBlock(int i)
         const auto id = d.ids[k];
         kn->rc.fn = [this, id] { macroMenu(id); };
         kn->slider.addMouseListener(&kn->rc, true);   // aussi sur la valeur au centre
-        if (proc.macroTree().getChildWithProperty("id", id).isValid())   // réglage piloté par la macro
+        const bool inMacro = [&] { const juce::ScopedLock sl(proc.stateLock); return proc.macroTree().getChildWithProperty("id", id).isValid(); }();
+        if (inMacro)   // réglage piloté par la macro
         {
             kn->label.setText(d.labels[k] + u8(" ◆"), juce::dontSendNotification);
             kn->label.setColour(juce::Label::textColourId, Colour(0xff0b6f8a));
@@ -1752,11 +1754,9 @@ void ToneForgeEditor::updateTuner()
 
 //==============================================================================
 // Étiquettes (modèle : Presets.db d'AmpliTube : genre, caractère…), clic droit sur une capture.
-static juce::String tagKey(const juce::File& f) { return f.getRelativePathFrom(kRoot).replaceCharacter('\\', '/'); }
-
-juce::StringArray ToneForgeEditor::tagsOf(const juce::File& f) const
+juce::StringArray ToneForgeEditor::tagsOf(const juce::String& key) const
 {
-    const auto it = tagMap.find(tagKey(f));
+    const auto it = tagMap.find(key);
     return it != tagMap.end() ? it->second : juce::StringArray();
 }
 
@@ -1784,7 +1784,7 @@ void ToneForgeEditor::tagMenu(int row)
     all.sortNatural();
     const bool onRow = juce::isPositiveAndBelow(row, shown.size()) && shown[row].file != juce::File();
     const auto f = onRow ? shown[row].file : juce::File();
-    const auto mine = tagsOf(f);
+    const auto mine = tagsOf(tagKey(f));
     juce::PopupMenu m, filt;
     if (onRow)
     {
@@ -1880,6 +1880,7 @@ void ToneForgeEditor::macroMenu(const juce::String& id)
     auto* p = proc.apvts.getParameter(id);
     if (!p)
         return;
+    const juce::ScopedLock sl(proc.stateLock);
     auto mt = proc.macroTree();
     auto t = mt.getChildWithProperty("id", id);
     auto txt = [p](const juce::var& v) { return p->getText((float) v, 12) + " " + p->getLabel(); };
@@ -1900,9 +1901,14 @@ void ToneForgeEditor::macroMenu(const juce::String& id)
     }
     if (mt.getNumChildren() > 0)
         m.addItem(5, "Vider la macro (" + juce::String(mt.getNumChildren()) + u8(" réglages)"));
-    m.showMenuAsync(juce::PopupMenu::Options().withMousePosition(), [this, p, id, mt, t](int r) mutable
+    m.showMenuAsync(juce::PopupMenu::Options().withMousePosition(), [this, p, id](int r)
     {
         const float now = p->getValue();
+        const juce::ScopedLock sl(proc.stateLock);
+        auto mt = proc.macroTree();   // relu : l'état a pu être remplacé pendant que le menu était ouvert
+        auto t = mt.getChildWithProperty("id", id);
+        if (!t.isValid() && ((r >= 2 && r <= 4) || r >= 10))
+            return;
         if (r == 1)
         {
             juce::ValueTree n("T");

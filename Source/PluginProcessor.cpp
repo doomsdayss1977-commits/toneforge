@@ -54,13 +54,20 @@ void ToneForgeProcessor::timerCallback()
     if (m == lastMacro)
         return;
     lastMacro = m;
-    for (const auto& t : macroTree())
+    juce::ValueTree targets;
+    {
+        const juce::ScopedLock sl(stateLock);
+        targets = macroTree().createCopy();
+    }
+    for (const auto& t : targets)
         if (auto* p = apvts.getParameter(t["id"].toString()))
         {
             const int c = t["curve"];
             const float x = c == 1 ? m * m : c == 2 ? 1.f - (1.f - m) * (1.f - m) : m;
             const float lo = t["min"], hi = t["max"];
+            p->beginChangeGesture();   // l'hôte enregistre l'automation comme un geste d'interface
             p->setValueNotifyingHost(lo + (hi - lo) * x);
+            p->endChangeGesture();
         }
 }
 
@@ -137,6 +144,8 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     gate.setRelease(80.f);
     cab.prepare(mono);
     cabB.prepare(mono);
+    alignA.prepare(mono);
+    alignB.prepare(mono);
     eq.prepare(mono);
     lastEq[0] = 99.f;
     updateEq();
@@ -222,13 +231,18 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     const bool cabOn = irLoaded && v("ir_on") > 0.5f;
     const bool bOn = v("ampb_on") > 0.5f && ampB.loaded;
     if (bOn && !bActive)
+    {
         cabB.reset();   // pas de reste de l'ancienne queue de convolution au rallumage
+        alignA.reset();
+        alignB.reset();
+    }
     bActive = bOn;
     if (bOn)
     {
         // Amplis A et B en parallèle (modèle : ChainSlot Amp A/B + Cab A/B d'AmpliTube), fondu linéaire
         const float mix = v("ab_mix"), gbIn = juce::Decibels::decibelsToGain(v("ampb_in")),
                     gbOut = juce::Decibels::decibelsToGain(v("ampb_out"));
+        const float latA = amp.loaded ? amp.latency.load() : 0.f, latB = ampB.latency.load();
         chunks(n, bufB.size(), [&](int o, int c)
         {
             float* a = x + o;
@@ -237,6 +251,15 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
             juce::FloatVectorOperations::multiply(a, gIn, c);
             runNam(amp, a, c, 1.f, 1.f);
             runNam(ampB, b, c, gbIn, gbOut);
+            const float dB = latA - latB;   // > 0 : B attend A, < 0 : A attend B
+            auto& dl = dB > 0 ? alignB : alignA;
+            float* p = dB > 0 ? b : a;
+            if (std::abs(dB) > 0.01f)
+                for (int i = 0; i < c; ++i)
+                {
+                    dl.pushSample(0, p[i]);
+                    p[i] = dl.popSample(0, std::abs(dB));
+                }
             juce::dsp::AudioBlock<float> ba(&a, 1, (size_t) c), bb(&b, 1, (size_t) c);
             if (cabOn)
                 cab.process(juce::dsp::ProcessContextReplacing<float>(ba));
@@ -305,7 +328,7 @@ void ToneForgeProcessor::runNam(NamSlot& s, float* x, int n, float gainIn, float
             chunks(n, s.in.size(), [&](int o, int c)
             {
                 if (s.rs.on)
-                    return processResampled(s, x + o, c);
+                    return processResampled(s.rs, s.model.get(), x + o, c);
                 std::copy(x + o, x + o + c, s.in.data());
                 float* in = s.in.data();
                 float* out = s.out.data();
@@ -365,11 +388,38 @@ void ToneForgeProcessor::configureModel(nam::DSP& m, NamSlot& s)
     r.out.assign((size_t) blk * 2 + 32, 0.f);
     r.inN = 0;
     r.outN = 12;   // amorce de silence : la sortie ne manque jamais d'échantillons
+
+    // Retard réel de la chaîne (amorce + interpolateurs) : phase d'un sinus lent à travers une copie à vide.
+    float lat = 0.f;
+    if (r.on)
+    {
+        Resampler t;   // interpolateurs non copiables : copie à l'état neuf
+        t.on = true;
+        t.ratio = r.ratio;
+        t.in = r.in;
+        t.mid = r.mid;
+        t.out = r.out;
+        t.outN = r.outN;
+        const int len = 4096, per = 512;
+        const double w = juce::MathConstants<double>::twoPi / per;
+        std::vector<float> buf((size_t) len);
+        for (int i = 0; i < len; ++i)
+            buf[(size_t) i] = (float) std::sin(w * i);
+        for (int o = 0; o < len; o += maxBlock)
+            processResampled(t, nullptr, buf.data() + o, juce::jmin(maxBlock, len - o));
+        double sn = 0, cs = 0;
+        for (int i = len / 2; i < len; ++i)
+        {
+            sn += buf[(size_t) i] * std::sin(w * i);
+            cs += buf[(size_t) i] * std::cos(w * i);
+        }
+        lat = (float) (std::atan2(-cs, sn) / w);
+    }
+    s.latency = lat;
 }
 
-void ToneForgeProcessor::processResampled(NamSlot& s, float* x, int n)
+void ToneForgeProcessor::processResampled(Resampler& r, nam::DSP* dsp, float* x, int n)
 {
-    auto& r = s.rs;
     std::copy(x, x + n, r.in.data() + r.inN);
     r.inN += n;
 
@@ -382,7 +432,10 @@ void ToneForgeProcessor::processResampled(NamSlot& s, float* x, int n)
 
     float* in = r.mid.data();
     float* out = r.out.data() + r.outN;
-    s.model->process(&in, &out, m);
+    if (dsp)
+        dsp->process(&in, &out, m);
+    else
+        std::copy(in, in + m, out);
     r.outN += m;
 
     // Descente au taux du projet : exactement n échantillons.
@@ -413,7 +466,11 @@ juce::String ToneForgeProcessor::loadIR(const juce::File& f, bool isB)
 
 void ToneForgeProcessor::getStateInformation(juce::MemoryBlock& dest)
 {
-    auto s = apvts.copyState();
+    juce::ValueTree s;
+    {
+        const juce::ScopedLock sl(stateLock);
+        s = apvts.copyState();
+    }
     s.setProperty("model", modelFile.getFullPathName(), nullptr);
     s.setProperty("pedal", pedalFile.getFullPathName(), nullptr);
     s.setProperty("ir", irFile.getFullPathName(), nullptr);
@@ -429,7 +486,10 @@ void ToneForgeProcessor::setStateInformation(const void* data, int size)
     if (!xml)
         return;
     auto s = juce::ValueTree::fromXml(*xml);
-    apvts.replaceState(s);
+    {
+        const juce::ScopedLock sl(stateLock);
+        apvts.replaceState(s);
+    }
     lastMacro = apvts.getRawParameterValue("macro")->load();   // les cibles sauvées priment : pas de ré-application
     const juce::File m(s.getProperty("model").toString()), pd(s.getProperty("pedal").toString()),
         ir(s.getProperty("ir").toString());

@@ -60,10 +60,18 @@ private:
                 fn();
         }
     };
+    // Molette que le clic droit ne fait pas tourner (il ouvre le menu macro).
+    struct KnobSlider : juce::Slider
+    {
+        using juce::Slider::Slider;
+        void mouseDown(const juce::MouseEvent& e) override { if (!e.mods.isPopupMenu()) juce::Slider::mouseDown(e); }
+        void mouseDrag(const juce::MouseEvent& e) override { if (!e.mods.isPopupMenu()) juce::Slider::mouseDrag(e); }
+        void mouseUp(const juce::MouseEvent& e) override { if (!e.mods.isPopupMenu()) juce::Slider::mouseUp(e); }
+    };
     struct Knob
     {
         RightClick rc;   // en premier : détruit après la molette qui l'écoute
-        juce::Slider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
+        KnobSlider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
         juce::Label label;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
     };
@@ -71,6 +79,7 @@ private:
     {
         juce::File file;
         juce::String group, name, brand;   // fichier vide = en-tête de marque dans la liste
+        juce::String key;   // clé des étiquettes (chemin relatif), calculée une fois au balayage
     };
 
     // Navigateur de captures (ListBoxModel)
@@ -108,7 +117,7 @@ private:
     void showTuner(bool on);
     void updateTuner();
     // Étiquettes des captures (tags.json de la bibliothèque) : genre, caractère, etc.
-    juce::StringArray tagsOf(const juce::File&) const;
+    juce::StringArray tagsOf(const juce::String& key) const;
     void saveTags() const;
     void tagMenu(int row);
 
