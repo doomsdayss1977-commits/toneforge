@@ -95,6 +95,7 @@ private:
         double ratio = 1.0;   // taux de la capture / taux du projet
         juce::Interpolators::Lagrange up, down;
         std::vector<float> in, mid, out;   // file d'entrée (projet), bloc NAM, file de sortie (capture)
+        std::vector<juce::dsp::IIR::Filter<float>> aa;   // anti-repliement avant l'étage qui baisse le taux
         int inN = 0, outN = 0;
     };
     // Emplacement de capture NAM (pédale ou ampli). Le thread audio n'y prend le verrou qu'en try-lock.

@@ -49,6 +49,13 @@ void ToneForgeProcessor::timerCallback()
             spare[k].reset(defs[k].make(nullptr));   // détruit aussi l'ancienne instance usée
             spareReady[k].store(true, std::memory_order_release);
         }
+    // Latence déclarée à l'hôte : pédale + ampli (le plus retardé de A et B quand B joue, cf. alignement)
+    const auto lat = [](const NamSlot& s) { return s.loaded ? s.latency.load() : 0.f; };
+    const bool bOn = apvts.getRawParameterValue("ampb_on")->load() > 0.5f && ampB.loaded;
+    const int latency = juce::roundToInt((apvts.getRawParameterValue("pedal_on")->load() > 0.5f ? lat(pedal) : 0.f)
+                                         + (bOn ? juce::jmax(lat(amp), lat(ampB)) : lat(amp)));
+    if (latency != getLatencySamples())
+        setLatencySamples(latency);
     // Macro : applique les cibles quand sa valeur change (thread de messages, comme un geste d'interface)
     const float m = apvts.getRawParameterValue("macro")->load();
     if (m == lastMacro)
@@ -387,7 +394,20 @@ void ToneForgeProcessor::configureModel(nam::DSP& m, NamSlot& s)
     r.mid.assign((size_t) blk, 0.f);
     r.out.assign((size_t) blk * 2 + 32, 0.f);
     r.inN = 0;
-    r.outN = 12;   // amorce de silence : la sortie ne manque jamais d'échantillons
+    // Amorce de silence : la sortie ne manque jamais d'échantillons (l'interpolateur garde 3 entrées, soit 3·ratio en sortie)
+    r.outN = juce::jmax(12, (int) std::ceil(3 * r.ratio) + 8);
+    // Elliptique : plat jusqu'à 0,45 du taux le plus bas, -70 dB à sa fréquence de Nyquist
+    const auto setupAA = [&](Resampler& q)
+    {
+        q.aa.clear();
+        if (!q.on)
+            return;
+        const double hi = juce::jmax(want, sr), lo = juce::jmin(want, sr);
+        for (auto& c : juce::dsp::FilterDesign<float>::designIIRLowpassHighOrderEllipticMethod(
+                 (float) (0.475 * lo), hi, (float) (0.05 * lo / hi), -0.1f, -70.f))
+            q.aa.emplace_back(c);
+    };
+    setupAA(r);
 
     // Retard réel de la chaîne (amorce + interpolateurs) : phase d'un sinus lent à travers une copie à vide.
     float lat = 0.f;
@@ -400,6 +420,7 @@ void ToneForgeProcessor::configureModel(nam::DSP& m, NamSlot& s)
         t.mid = r.mid;
         t.out = r.out;
         t.outN = r.outN;
+        setupAA(t);
         const int len = 4096, per = 512;
         const double w = juce::MathConstants<double>::twoPi / per;
         std::vector<float> buf((size_t) len);
@@ -420,7 +441,15 @@ void ToneForgeProcessor::configureModel(nam::DSP& m, NamSlot& s)
 
 void ToneForgeProcessor::processResampled(Resampler& r, nam::DSP* dsp, float* x, int n)
 {
+    const auto lowpass = [&r](float* p, int k)
+    {
+        for (auto& f : r.aa)
+            for (int i = 0; i < k; ++i)
+                p[i] = f.processSample(p[i]);
+    };
     std::copy(x, x + n, r.in.data() + r.inN);
+    if (r.ratio < 1)
+        lowpass(r.in.data() + r.inN, n);   // capture plus lente : filtrer avant la descente vers son taux
     r.inN += n;
 
     // Montée au taux de la capture : on garde 3 échantillons d'avance pour l'interpolateur.
@@ -436,6 +465,8 @@ void ToneForgeProcessor::processResampled(Resampler& r, nam::DSP* dsp, float* x,
         dsp->process(&in, &out, m);
     else
         std::copy(in, in + m, out);
+    if (r.ratio > 1)
+        lowpass(out, m);   // capture plus rapide : filtrer avant la descente vers le taux du projet
     r.outN += m;
 
     // Descente au taux du projet : exactement n échantillons.
