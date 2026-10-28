@@ -132,8 +132,160 @@ void led(juce::Graphics& g, juce::Rectangle<float> r, Colour col, bool on)
 Colour pedalColour(int i)
 {
     static const juce::uint32 c[] = { 0xff59606b, 0xff2a6fb8, 0xffb8322a, 0xff262626, 0xff7a4a26, 0xff4a3524,
-                                      0xffb9bec5, 0xff7445b0, 0xff2e8b57, 0xff1b8c99 };
+                                      0xffb9bec5, 0xff7445b0, 0xff2e8b57, 0xff1b8c99, 0xffd9a21b, 0xff3a7d44, 0xff8e2c5c };
     return juce::isPositiveAndBelow(i, (int) std::size(c)) ? Colour(c[i]) : Colour(0xff59606b);
+}
+
+// Habillage des pédales NAM d'après le modèle de la capture (table reprise du studio).
+struct PedalLook
+{
+    const char* needle;   // mot cherché dans « dossier nom » (minuscules, mot entier)
+    const char* logo;
+    int shape;            // 0 compacte, 1 large, 2 Ibanez (semelle au pied), 3 Behringer (pédale en caoutchouc)
+    juce::uint32 body, ink, knob;
+    std::vector<const char*> knobs;   // boutons d'origine, dans l'ordre du boîtier
+};
+static const std::vector<PedalLook>& pedalLooks()
+{
+    const juce::uint32 black = 0xff151515, white = 0xfff2f2f2, alu = 0xffc4c6c9;
+    static const std::vector<PedalLook> l = {
+        { "ts9b", "TUBE SCREAMER\nTS9B", 2, 0xff1f5a3a, white, black, { "Drive", "Tone", "Level", "Mix" } },
+        { "ts9", "TUBE SCREAMER\nTS9", 2, 0xff2f8f4a, white, black, { "Drive", "Tone", "Level" } },
+        { "bass big muff", "BASS BIG MUFF", 1, alu, black, black, { "Volume", "Tone", "Sustain" } },
+        { "green russian", "BIG MUFF", 1, 0xff4f6236, black, black, { "Volume", "Tone", "Sustain" } },
+        { "big muff", "BIG MUFF", 1, 0xffe3e2dc, 0xffc21a1a, black, { "Volume", "Tone", "Sustain" } },
+        { "behringer", "CENTAUR", 3, 0xffd6b04a, black, 0xfff1e6c8, { "Gain", "Treble", "Output" } },
+        { "klon", "KLON", 0, 0xffd8d9dc, black, black, { "Gain", "Treble", "Output" } },
+        { "rat", "RAT", 0, 0xff1a1a1a, white, black, { "Distortion", "Filter", "Volume" } },
+        { "b7k", "darkglass\nB7K", 1, alu, black, black, { "Master", "Level", "Blend", "Drive" } },
+        { "driver v2", "SANSAMP\nBASS DRIVER", 1, 0xffbfc2c4, black, black,
+          { "Level", "Blend", "Treble", "Bass", "Drive", "Presence", "Mid", "Shift" } },
+        { "sansamp", "SANSAMP\nBASS DRIVER", 1, 0xffbfc2c4, black, black, { "Level", "Blend", "Treble", "Bass", "Drive", "Presence" } },
+        { "fuzz war", "FUZZ WAR", 0, 0xffe8e6dc, black, black, { "Volume", "Tone", "Sustain" } },
+        { "fuzzrite", "FUZZRITE", 0, 0xffa8a8a8, black, black, { "Volume", "Depth" } },
+    };
+    return l;
+}
+static bool hasWord(const juce::String& s, const juce::String& w)
+{
+    for (int i = s.indexOf(w); i >= 0; i = s.indexOf(i + 1, w))
+    {
+        const int e = i + w.length();
+        if ((i == 0 || !juce::CharacterFunctions::isLetter(s[i - 1])) && (e >= s.length() || !juce::CharacterFunctions::isLetter(s[e])))
+            return true;
+    }
+    return false;
+}
+static const PedalLook* lookOf(const juce::File& f)
+{
+    if (f == juce::File())
+        return nullptr;
+    const auto s = (f.getParentDirectory().getFileName() + " " + f.getFileNameWithoutExtension()).toLowerCase();
+    for (auto& k : pedalLooks())
+        if (hasWord(s, k.needle))
+            return &k;
+    return nullptr;
+}
+// Rôle de chaque bouton d'origine : suffixe du paramètre ToneForge, vide = figé au réglage de la capture
+static juce::StringArray knobRoles(const PedalLook& k)
+{
+    juce::StringArray r;
+    for (auto* lab : k.knobs)
+    {
+        const auto l = juce::String(lab).toLowerCase();
+        const juce::String ro = l == "drive" || l == "gain" || l == "distortion" || l == "sustain" || l == "depth" ? "_in"
+                              : l == "level" || l == "volume" || l == "output" || l == "master" ? "_out"
+                              : l == "tone" || l == "treble" || l == "filter" ? "_tone"
+                              : l == "mix" || l == "blend" ? "_mix" : "";
+        r.add(ro.isNotEmpty() && r.contains(ro) ? juce::String() : ro);   // un seul bouton par réglage
+    }
+    return r;
+}
+// Position d'un bouton lue dans le nom de la capture (« Drive 8 », « T5 », « Sus10 », « D-1_30 » = 13 h 30), 0-1 ; -1 si absente
+static float knobFromName(const juce::String& name, const juce::String& label, bool initial)
+{
+    const auto s = name.toLowerCase().toStdString(), lab = label.toLowerCase().toStdString();
+    const std::string v = "(max|min|\\d+(?:_\\d\\d)?)";
+    const std::string pats[] = { "\\b" + lab + "[\\s_-]*" + v, "\\b" + lab.substr(0, 3) + "[a-z]*[\\s_-]*" + v,
+                                 "\\b" + lab.substr(0, 1) + "-?" + v + "\\b" };
+    for (int n = 0; n < (initial ? 3 : 2); ++n)
+    {
+        std::smatch m;
+        if (!std::regex_search(s, m, std::regex(pats[n])))
+            continue;
+        const juce::String g(m[1].str());
+        if (g == "max")
+            return 1.f;
+        if (g == "min")
+            return 0.f;
+        if (g.contains("_"))   // heure de cadran : 7 h = 0, midi = 0,5, 17 h = 1
+        {
+            const float t = g.upToFirstOccurrenceOf("_", false, false).getFloatValue() + g.fromFirstOccurrenceOf("_", false, false).getFloatValue() / 60.f;
+            return juce::jlimit(0.f, 1.f, (t >= 7.f ? t - 7.f : t + 5.f) / 10.f);
+        }
+        return juce::jlimit(0.f, 1.f, g.getFloatValue() / 10.f);
+    }
+    return -1.f;
+}
+static float fixedKnob(const PedalLook& lk, int k, const juce::File& f)
+{
+    int same = 0;   // l'initiale seule (« T5 ») ne compte que si elle est propre à ce bouton
+    for (auto* o : lk.knobs)
+        same += std::tolower(o[0]) == std::tolower(lk.knobs[(size_t) k][0]);
+    const float v = knobFromName(f.getFileNameWithoutExtension(), lk.knobs[(size_t) k], same == 1);
+    return v < 0.f ? 0.5f : v;
+}
+// Façade d'une pédale habillée : boutons d'origine (utiles = paramètres, autres = figés), puis les réglages utiles absents du boîtier.
+static void pedalKnobs(const PedalLook& lk, const juce::File& f, const juce::String& pid, juce::StringArray& ids,
+                       juce::StringArray& labels, std::vector<float>& fixed)
+{
+    const juce::StringArray roles { "_in", "_out", "_tone", "_mix" },
+        generic { u8("Entrée (dB)"), "Sortie (dB)", u8("Tonalité"), u8("Mélange") };
+    const auto r = knobRoles(lk);
+    ids.clear();
+    labels.clear();
+    fixed.clear();
+    for (size_t k = 0; k < lk.knobs.size(); ++k)
+    {
+        ids.add(r[(int) k].isEmpty() ? juce::String() : pid + r[(int) k]);
+        labels.add(lk.knobs[k]);
+        fixed.push_back(fixedKnob(lk, (int) k, f));
+    }
+    for (int j = 0; j < roles.size(); ++j)
+        if (!r.contains(roles[j]))
+        {
+            ids.add(pid + roles[j]);
+            labels.add(generic[j]);
+            fixed.push_back(0.f);
+        }
+}
+// Petits boutons sur la carte de la chaîne (4 par rangée, 2 rangées au plus) ; renvoie le bas du dessin.
+static float miniKnobs(juce::Graphics& g, juce::Rectangle<float> area, const std::vector<float>& vals, juce::Colour cap, float d)
+{
+    const int n = (int) vals.size();
+    if (n == 0)
+        return area.getY();
+    const int per = n > 4 ? (n + 1) / 2 : n, rows = (n + per - 1) / per;
+    float y = area.getY();
+    for (int row = 0, k = 0; row < rows; ++row)
+    {
+        const int m = juce::jmin(per, n - k);
+        const float gap = d * 0.45f, w = (float) m * d + (float) (m - 1) * gap, x0 = area.getCentreX() - w * 0.5f;
+        for (int j = 0; j < m; ++j, ++k)
+        {
+            const juce::Point<float> c(x0 + d * 0.5f + (float) j * (d + gap), y + d * 0.5f);
+            const auto disc = juce::Rectangle<float>(d, d).withCentre(c);
+            g.setColour(juce::Colours::black.withAlpha(0.4f));
+            g.fillEllipse(disc.translated(0.f, 1.f));
+            g.setGradientFill(juce::ColourGradient(cap.brighter(0.35f), c.x, disc.getY(), cap.darker(0.3f), c.x, disc.getBottom(), false));
+            g.fillEllipse(disc);
+            const float a = juce::MathConstants<float>::pi * (-0.75f + 1.5f * vals[(size_t) k]);
+            g.setColour(cap.getPerceivedBrightness() > 0.5f ? juce::Colours::black : juce::Colours::white);
+            g.drawLine(c.x, c.y, c.x + std::sin(a) * d * 0.42f, c.y - std::cos(a) * d * 0.42f, 1.2f);
+        }
+        y += d + 3.f;
+    }
+    return y;
 }
 
 // Marque d'une capture d'après son dossier et son nom (modèles connus compris).
@@ -515,7 +667,8 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     const juce::StringArray cats { "Dynamique", "Modulation", u8("Écho"), "Espace" };
     defs.add({ "Gate", "Bruit", "gate_on", "Coupe le souffle sous le seuil", { "gate" }, { "Seuil (dB)" } });
     defs.add(fxBlock(fx[0], cats[0]));
-    defs.add({ u8("Pédale"), "NAM", "pedal_on", {}, { "pedal_in", "pedal_out" }, { u8("Entrée (dB)"), "Sortie (dB)" } });
+    defs.add({ u8("Pédale"), "NAM", "pedal_on", {}, { "pedal_in", "pedal_out", "pedal_tone", "pedal_mix" },
+               { u8("Entrée (dB)"), "Sortie (dB)", u8("Tonalité"), u8("Mélange") } });
     defs.add({ "Ampli", "NAM", {}, {}, { "input", "output" }, { u8("Entrée (dB)"), "Sortie (dB)" } });
     defs.add({ "Baffle", "IR", "ir_on", {}, {}, {} });
     defs.add({ "Ampli B", "NAM", "ampb_on", {}, { "ampb_in", "ampb_out", "ab_mix", "dyn_amt", "dyn_thr", "dyn_range", "dyn_rel" },
@@ -524,11 +677,19 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
                { "Graves", u8("Médiums"), "Aigus" } });
     for (size_t i = 1; i < fx.size(); ++i)
         defs.add(fxBlock(fx[i], cats[(int) i]));
+    for (int s = 1; s < ToneForgeProcessor::kPedals; ++s)   // blocs 10..12
+    {
+        const auto id = ToneForgeProcessor::pedalId(s);
+        defs.add({ u8("Pédale ") + juce::String(s + 1), "NAM", id + "_on", {}, { id + "_in", id + "_out", id + "_tone", id + "_mix" },
+                   { u8("Entrée (dB)"), "Sortie (dB)", u8("Tonalité"), u8("Mélange") } });
+    }
     for (int i = 0; i < defs.size(); ++i)
     {
         blocks.push_back(std::make_unique<Block>(*this, i));
-        addAndMakeVisible(*blocks.back());
+        addChildComponent(*blocks.back());
     }
+    addAndMakeVisible(addCard);
+    rebuildOrder();
 
     // Navigateur
     search.setTextToShowWhenEmpty("Rechercher une capture...", tf::dim);
@@ -842,12 +1003,17 @@ void ToneForgeEditor::load(const juce::File& f, int kind)
         selectBlock(blockOf(kind));   // déjà chargé : pas de rechargement
         return;
     }
-    const auto err = kind == 2 || kind == 4 ? proc.loadIR(f, kind == 4) : proc.loadModel(f, kind == 1, kind == 3);
+    const int ps = ToneForgeProcessor::pedalSlotOf(kind);
+    const auto err = kind == 2 || kind == 4 ? proc.loadIR(f, kind == 4) : proc.loadModel(f, ps >= 0, kind == 3, juce::jmax(0, ps));
     dirty = true;
     if (err.isNotEmpty())
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "ToneForge", err);
-    else if (kind == 1 && !blockOn(kPedal))   // choisir une pédale l'allume
-        toggleBlock(kPedal);
+    else if (ps >= 0)   // choisir une pédale la met dans la chaîne et l'allume
+    {
+        insertUnit(blockOfSlot(ps));
+        if (!blockOn(blockOfSlot(ps)))
+            toggleBlock(blockOfSlot(ps));
+    }
     else if (kind == 3 && !blockOn(kAmpB))   // choisir un ampli B l'allume
         toggleBlock(kAmpB);
     selectBlock(blockOf(kind));
@@ -873,16 +1039,17 @@ void ToneForgeEditor::pick()
 void ToneForgeEditor::refreshLabels()
 {
     auto name = [](const juce::File& f) { return f == juce::File() ? juce::String("(aucun)") : f.getFileNameWithoutExtension(); };
-    const bool ped = selected == kPedal, ab = selected == kAmpB;   // l'écran montre la pédale / l'ampli B quand son bloc est affiché
-    nameLbl.setText(name(ped ? proc.pedalFiles[0] : ab ? proc.modelBFile : proc.modelFile), juce::dontSendNotification);
-    warnLbl.setText(proc.modelWarning(ped ? 1 : ab ? 3 : 0), juce::dontSendNotification);
+    const bool ped = isPedalBlock(selected), ab = selected == kAmpB;   // l'écran montre la pédale / l'ampli B quand son bloc est affiché
+    const auto& pf = proc.pedalFiles[juce::jmax(0, slotOfBlock(selected))];
+    nameLbl.setText(name(ped ? pf : ab ? proc.modelBFile : proc.modelFile), juce::dontSendNotification);
+    warnLbl.setText(proc.modelWarning(ped ? ToneForgeProcessor::pedalKind(slotOfBlock(selected)) : ab ? 3 : 0), juce::dontSendNotification);
     // Chemin court : relatif à la bibliothèque quand la capture en vient
     auto path = [](const juce::File& f) { return f.isAChildOf(kRoot) ? f.getRelativePathFrom(kRoot).replaceCharacter('\\', '/') : f.getFullPathName(); };
     if (selected == kAmp)
         panelInfo.setText(path(proc.modelFile), juce::dontSendNotification);
     else if (ped)
-        panelInfo.setText(proc.pedalFiles[0] == juce::File() ? u8("Aucune pédale : choisis-en une dans Pédales.")
-                                                         : path(proc.pedalFiles[0]), juce::dontSendNotification);
+        panelInfo.setText(pf == juce::File() ? u8("Aucune pédale : choisis-en une dans Pédales.")
+                                             : path(pf), juce::dontSendNotification);
     else if (selected == kCab)
         panelInfo.setText(proc.irFile == juce::File() ? juce::String("Aucune IR : choisis-en une dans Baffles.")
                                                       : path(proc.irFile), juce::dontSendNotification);
@@ -899,7 +1066,7 @@ void ToneForgeEditor::refreshLabels()
 bool ToneForgeEditor::blockOn(int i) const
 {
     const auto& d = defs.getReference(i);
-    if ((i == kPedal && proc.pedalFiles[0] == juce::File()) || (i == kAmpB && proc.modelBFile == juce::File()))
+    if ((isPedalBlock(i) && proc.pedalFiles[slotOfBlock(i)] == juce::File()) || (i == kAmpB && proc.modelBFile == juce::File()))
         return false;
     if (d.onId.isNotEmpty())
         return proc.apvts.getRawParameterValue(d.onId)->load() > 0.5f;
@@ -910,8 +1077,8 @@ bool ToneForgeEditor::blockOn(int i) const
 
 void ToneForgeEditor::toggleBlock(int i)
 {
-    if (i == kPedal && proc.pedalFiles[0] == juce::File())   // rien à allumer : ouvrir la liste des pédales
-        return selectBlock(kPedal);
+    if (isPedalBlock(i) && proc.pedalFiles[slotOfBlock(i)] == juce::File())   // rien à allumer : ouvrir la liste des pédales
+        return selectBlock(i);
     if (i == kAmpB && proc.modelBFile == juce::File())   // idem : ouvrir la liste des amplis pour B
         return selectBlock(kAmpB);
     if (auto* p = proc.apvts.getParameter(defs[i].onId))
@@ -927,8 +1094,8 @@ void ToneForgeEditor::toggleBlock(int i)
 void ToneForgeEditor::selectBlock(int i)
 {
     selected = i;
-    if (i == kAmp || i == kPedal || i == kCab)   // la liste suit le bloc NAM / IR affiché
-        setTab(i == kAmp ? 0 : i == kPedal ? 1 : 2);
+    if (i == kAmp || isPedalBlock(i) || i == kCab)   // la liste suit le bloc NAM / IR affiché
+        setTab(i == kAmp ? 0 : isPedalBlock(i) ? 1 : 2);
     else if (i == kAmpB && tab == 1)
         setTab(0);
     list.repaint();   // la capture en cours change entre A et B
@@ -941,10 +1108,15 @@ void ToneForgeEditor::selectBlock(int i)
     bypass.onClick = [this] { for (auto& b : blocks) b->repaint(); };
 
     knobs.clear();
-    for (int k = 0; k < d.ids.size(); ++k)
+    juce::StringArray ids = d.ids, labels = d.labels;
+    std::vector<float> fixed((size_t) ids.size(), 0.f);
+    if (const int s = slotOfBlock(i); s >= 0)
+        if (const auto* lk = lookOf(proc.pedalFiles[s]))
+            pedalKnobs(*lk, proc.pedalFiles[s], ToneForgeProcessor::pedalId(s), ids, labels, fixed);
+    for (int k = 0; k < ids.size(); ++k)
     {
         auto kn = std::make_unique<Knob>();
-        kn->label.setText(d.labels[k], juce::dontSendNotification);
+        kn->label.setText(labels[k], juce::dontSendNotification);
         kn->label.setJustificationType(juce::Justification::centred);
         kn->label.setColour(juce::Label::textColourId, tf::ink);
         kn->label.setFont(juce::FontOptions(12.f, juce::Font::bold));
@@ -952,22 +1124,33 @@ void ToneForgeEditor::selectBlock(int i)
         kn->slider.setColour(juce::Slider::textBoxTextColourId, tf::txt);
         kn->slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
         kn->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 20);   // placée au centre par TfLook::getSliderLayout
-        kn->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, d.ids[k], kn->slider);
-        const int dec = proc.apvts.getParameterRange(d.ids[k]).end <= 1.f ? 2 : 1;
+        if (ids[k].isEmpty())   // bouton d'origine sans fonction : montré au réglage de la capture
+        {
+            kn->slider.setRange(0.0, 10.0, 0.1);
+            kn->slider.setValue(fixed[(size_t) k] * 10.0, juce::dontSendNotification);
+            kn->slider.setEnabled(false);
+            kn->slider.setAlpha(0.7f);
+            addAndMakeVisible(kn->slider);
+            addAndMakeVisible(kn->label);
+            knobs.push_back(std::move(kn));
+            continue;
+        }
+        kn->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc.apvts, ids[k], kn->slider);
+        const int dec = proc.apvts.getParameterRange(ids[k]).end <= 1.f ? 2 : 1;
         kn->slider.textFromValueFunction = [dec](double v) { return juce::String(v, dec); };
-        if (d.ids[k] == "delay_0")
+        if (ids[k] == "delay_0")
         {
             kn->slider.textFromValueFunction = [this](double v) { return juce::String(juce::roundToInt(delayMs(v, proc.getSampleRate()))) + " ms"; };
             kn->slider.valueFromTextFunction = [this](const juce::String& t) { return delayNorm(t.getDoubleValue(), proc.getSampleRate()); };
         }
         kn->slider.updateText();
-        const auto id = d.ids[k];
+        const auto id = ids[k];
         kn->rc.fn = [this, id] { macroMenu(id); };
         kn->slider.addMouseListener(&kn->rc, true);   // aussi sur la valeur au centre
         const bool inMacro = [&] { const juce::ScopedLock sl(proc.stateLock); return proc.macroTree().getChildWithProperty("id", id).isValid(); }();
         if (inMacro)   // réglage piloté par la macro
         {
-            kn->label.setText(d.labels[k] + u8(" ◆"), juce::dontSendNotification);
+            kn->label.setText(labels[k] + u8(" ◆"), juce::dontSendNotification);
             kn->label.setColour(juce::Label::textColourId, Colour(0xff0b6f8a));
         }
         addAndMakeVisible(kn->slider);
@@ -987,7 +1170,9 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
     namespace Colours = juce::Colours;
     const auto& d = ed.defs.getReference(index);
     const bool on = onA > 0.5f;
-    const auto col = pedalColour(index).brighter(0.12f * hov);
+    const int slot = slotOfBlock(index);
+    const auto* lk = slot >= 0 ? lookOf(ed.proc.pedalFiles[slot]) : nullptr;   // pédale habillée comme l'originale
+    const auto col = (lk ? Colour(lk->body) : pedalColour(index)).brighter(0.12f * hov);
     const auto r = getLocalBounds().toFloat().reduced(5.f, 4.f).translated(0.f, -2.f * hov + 1.f);   // se soulève au survol
 
     for (int i = 1; i <= 3; ++i)   // ombre douce, plus étalée quand le bloc est soulevé (reste dans les bornes)
@@ -1020,15 +1205,41 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
                      r.getBottomLeft().translated(7.f, -7.f), r.getBottomRight().translated(-7.f, -7.f) })
         screw(g, pt, 2.3f);
 
-    const auto ink = (col.getPerceivedBrightness() > 0.6f ? tf::ink : Colours::white).withAlpha(0.55f + 0.45f * onA);
+    const auto ink = (lk ? Colour(lk->ink) : col.getPerceivedBrightness() > 0.6f ? tf::ink : Colours::white).withAlpha(0.55f + 0.45f * onA);
     led(g, juce::Rectangle<float>(9.f, 9.f).withCentre({ r.getCentreX(), r.getY() + 12.f }), Colour(0xffff3b30), on);
-    g.setColour(ink.withMultipliedAlpha(0.65f));
-    g.setFont(juce::FontOptions(9.f, juce::Font::bold));
-    g.drawText(upper(d.kind), r.withTrimmedTop(21.f).withHeight(12.f).toNearestInt(), juce::Justification::centred, true);
-    g.setColour(ink);
-    g.setFont(juce::FontOptions(15.f, juce::Font::bold));
-    g.drawText(d.title, r.withTrimmedTop(33.f).withHeight(22.f).toNearestInt(), juce::Justification::centred, true);
+    const auto vals = ed.knobValues(index);
+    const float kd = juce::jlimit(6.f, 11.f, r.getWidth() / 6.f);
+    if (lk)   // boutons d'origine en haut, logo au milieu
+    {
+        const float y = miniKnobs(g, r.withTrimmedTop(20.f), vals, Colour(lk->knob), kd);
+        g.setColour(ink);
+        g.setFont(juce::FontOptions(juce::jlimit(8.f, 12.f, r.getWidth() / 7.f), juce::Font::bold));
+        g.drawFittedText(lk->logo, juce::Rectangle<float>(r.getX() + 4.f, y, r.getWidth() - 8.f, r.getBottom() - 40.f - y).toNearestInt(),
+                         juce::Justification::centred, 2, 0.8f);
+    }
+    else
+    {
+        g.setColour(ink.withMultipliedAlpha(0.65f));
+        g.setFont(juce::FontOptions(9.f, juce::Font::bold));
+        g.drawText(upper(d.kind), r.withTrimmedTop(21.f).withHeight(12.f).toNearestInt(), juce::Justification::centred, true);
+        g.setColour(ink);
+        g.setFont(juce::FontOptions(juce::jlimit(10.f, 15.f, r.getWidth() / 5.f), juce::Font::bold));
+        g.drawText(d.title, r.withTrimmedTop(33.f).withHeight(22.f).toNearestInt(), juce::Justification::centred, true);
+        miniKnobs(g, r.withTrimmedTop(57.f), vals, Colour(0xff151515), kd * 0.8f);   // effets : allure de pédale compacte
+    }
 
+    if (lk && lk->shape >= 2)   // Ibanez : semelle au pied ; Behringer : pédale en caoutchouc
+    {
+        const juce::Rectangle<float> pad(r.getX() + 6.f, r.getBottom() - 38.f, r.getWidth() - 12.f, 32.f);
+        const auto pc = lk->shape == 2 ? col : Colour(0xff2a2a2a);
+        g.setColour(Colours::black.withAlpha(0.5f));
+        g.fillRoundedRectangle(pad.translated(0.f, 1.5f), 5.f);
+        g.setGradientFill(juce::ColourGradient(pc.brighter(0.2f), 0, pad.getY(), pc.darker(0.5f), 0, pad.getBottom(), false));
+        g.fillRoundedRectangle(pad, 5.f);
+        g.setColour(Colour(0xff111111));
+        g.fillRoundedRectangle(pad.reduced(pad.getWidth() * 0.2f, 9.f), 3.f);
+        return;
+    }
     const juce::Point<float> fc(r.getCentreX(), r.getBottom() - 22.f);
     g.setColour(Colour(0xff151515));
     g.fillEllipse(juce::Rectangle<float>(28.f, 28.f).withCentre(fc));
@@ -1042,8 +1253,38 @@ void ToneForgeEditor::Block::paint(juce::Graphics& g)
     g.drawEllipse(juce::Rectangle<float>(22.f, 22.f).withCentre(fc), 1.f);
 }
 
+void ToneForgeEditor::Block::mouseDown(const juce::MouseEvent&)
+{
+    home = getBounds();
+    dragging = false;
+}
+
+// Glisser-déposer : seuls les blocs mobiles (pédales, effets) se déplacent, à l'horizontale.
+void ToneForgeEditor::Block::mouseDrag(const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu() || ed.unitOf(index).isEmpty())
+        return;
+    const int dx = e.getScreenX() - e.getMouseDownScreenX();
+    if (!dragging && std::abs(dx) < 6)
+        return;
+    if (!dragging)
+    {
+        dragging = true;
+        toFront(false);
+        setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    }
+    setBounds(home.translated(dx, 0));
+    ed.repaint(ed.cableStrip());
+}
+
 void ToneForgeEditor::Block::mouseUp(const juce::MouseEvent& e)
 {
+    if (dragging)
+    {
+        dragging = false;
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        return ed.dropBlock(index, getBounds().getCentreX());
+    }
     if (e.mods.isPopupMenu())
         return ed.blockMenu(index);
     // Interrupteur au pied ou LED = marche/arrêt ; ailleurs = afficher les réglages du bloc.
@@ -1098,7 +1339,8 @@ void ToneForgeEditor::timerCallback()
     {
         for (auto& b : blocks)
             b->repaint();
-        warnLbl.setText(proc.modelWarning(selected == kPedal ? 1 : selected == kAmpB ? 3 : 0), juce::dontSendNotification);   // le taux du projet a pu changer
+        warnLbl.setText(proc.modelWarning(isPedalBlock(selected) ? ToneForgeProcessor::pedalKind(slotOfBlock(selected))
+                                          : selected == kAmpB ? 3 : 0), juce::dontSendNotification);   // le taux du projet a pu changer
        #if JucePlugin_Build_Standalone
         if (auto* h = juce::StandalonePluginHolder::getInstance(); h && std::exchange(dirty, false))
             h->savePluginState();
@@ -1114,12 +1356,17 @@ void ToneForgeEditor::timerCallback()
         v = juce::jlimit(0.f, 1.f, v + (to ? 0.22f : -0.22f));
         return v != o;
     };
+    if (proc.getChain() != shownChain)   // preset ou session rechargé
+    {
+        rebuildOrder();
+        resized();
+    }
     for (auto& b : blocks)
     {
         bool ch = ease(b->hov, b->isMouseOver(true));
         ch |= ease(b->selA, selected == b->index);
         ch |= ease(b->onA, blockOn(b->index));
-        if (ch)
+        if (ch || b->index == selected)
             b->repaint();
     }
     if (isShowing())   // fenêtre réduite ou cachée : rien à animer
@@ -1214,8 +1461,11 @@ void ToneForgeEditor::renderBackground()
     g.setColour(sk.piping.withAlpha(0.85f));
     g.drawRoundedRectangle(pa.reduced(7.f), 8.f, 2.5f);
 
+    const auto& pf = proc.pedalFiles[juce::jmax(0, slotOfBlock(selected))];
+    const auto* plk = isPedalBlock(selected) ? lookOf(pf) : nullptr;   // façade aux couleurs de la pédale d'origine
     const auto pl = plateArea.toFloat();
-    const auto plateCol = selected == kAmp ? sk.plate : pedalColour(selected).interpolatedWith(Colour(0xffd3d6db), 0.62f);
+    const auto plateCol = plk ? Colour(plk->body)
+                        : selected == kAmp ? sk.plate : pedalColour(selected).interpolatedWith(Colour(0xffd3d6db), 0.62f);
     juce::DropShadow(Colours::black.withAlpha(0.6f), 8, { 0, 3 }).drawForRectangle(g, plateArea);
     {
         juce::Graphics::ScopedSaveState s(g);
@@ -1233,7 +1483,7 @@ void ToneForgeEditor::renderBackground()
         screw(g, pt, 3.5f);
 
     // Sérigraphie lisible sur plaque claire ou sombre
-    const auto ink = plateCol.getPerceivedBrightness() > 0.5f ? tf::ink : tf::cream;
+    const auto ink = plk ? Colour(plk->ink) : plateCol.getPerceivedBrightness() > 0.5f ? tf::ink : tf::cream;
     panelTitle.setColour(juce::Label::textColourId, ink);
     bypass.setColour(juce::ToggleButton::textColourId, ink);
     for (auto& k : knobs)   // la valeur reste claire : elle est sur le disque sombre de la molette
@@ -1256,13 +1506,14 @@ void ToneForgeEditor::renderBackground()
     }
     const auto logoArea = gr.withTrimmedBottom(40.f).toNearestInt();
     const bool brandLogo = selected == kAmp && brand.isNotEmpty() && brand != "Autres";
-    const auto pedBrand = proc.pedalFiles[0] == juce::File() ? juce::String()
-                        : brandOf(proc.pedalFiles[0].getParentDirectory().getFileName() + " " + proc.pedalFiles[0].getFileNameWithoutExtension(), true);
-    const auto text = brandLogo ? brand
-                    : selected == kPedal && pedBrand.isNotEmpty() && pedBrand != "Autres" ? pedBrand : defs[selected].title;
-    const auto lc = brandLogo ? sk.logo : Colour(0xfff4f1e8);
+    const auto pedBrand = pf == juce::File() ? juce::String()
+                        : brandOf(pf.getParentDirectory().getFileName() + " " + pf.getFileNameWithoutExtension(), true);
+    const auto text = brandLogo ? brand : plk ? juce::String(plk->logo).replace("\n", "  ")
+                    : isPedalBlock(selected) && pedBrand.isNotEmpty() && pedBrand != "Autres" ? pedBrand : defs[selected].title;
+    const auto lc = brandLogo ? sk.logo : plk ? (Colour(plk->body).getPerceivedBrightness() > 0.3f ? Colour(plk->body) : Colour(plk->ink))
+                                            : Colour(0xfff4f1e8);
     g.setFont(brandLogo ? juce::FontOptions(sk.font, sk.size, sk.italic ? juce::Font::bold | juce::Font::italic : juce::Font::bold)
-                        : juce::FontOptions("Segoe Script", 56.f, juce::Font::bold));
+                        : plk ? juce::FontOptions(46.f, juce::Font::bold) : juce::FontOptions("Segoe Script", 56.f, juce::Font::bold));
     g.setColour(Colours::black.withAlpha(0.75f));
     g.drawText(text, logoArea + juce::Point<int>(3, 4), juce::Justification::centred);
     g.setGradientFill(juce::ColourGradient(lc.brighter(0.3f), 0, (float) logoArea.getCentreY() - 24.f, lc.darker(0.3f), 0, (float) logoArea.getCentreY() + 24.f, false));
@@ -1281,9 +1532,9 @@ void ToneForgeEditor::paint(juce::Graphics& g)
     {
         const float k = juce::jlimit(0.25f, 1.f, 0.25f + levelOut * 3.f);
         const float wave = (float) chainArea.getX() + pulse * (float) chainArea.getWidth();
-        for (size_t i = 0; i + 1 < blocks.size(); ++i)
+        for (size_t i = 0; i + 1 < order.size(); ++i)
         {
-            const auto a = blocks[i]->getBounds().toFloat(), b = blocks[i + 1]->getBounds().toFloat();
+            const auto a = blocks[(size_t) order[i]]->getBounds().toFloat(), b = blocks[(size_t) order[i + 1]]->getBounds().toFloat();
             const float y = a.getY() + a.getHeight() * 0.42f, x0 = a.getRight() - 6.f, x1 = b.getX() + 6.f;
             const float d = ((x0 + x1) * 0.5f - wave) / 70.f, hot = k * (0.35f + 0.65f * std::exp(-d * d));
             g.setColour(tf::acc2.withAlpha(0.18f * hot));
@@ -1389,14 +1640,15 @@ void ToneForgeEditor::resized()
     auto c = r.reduced(16);
     chainArea = c.removeFromTop(118);
     {
-        const int n = (int) blocks.size(), gap = 12;
-        const int bw = (chainArea.getWidth() - gap * (n - 1)) / n;
+        const int n = (int) order.size() + 1, gap = 8;   // + la carte d'ajout
+        const int bw = juce::jmin(110, (chainArea.getWidth() - gap * (n - 1)) / n);
         auto row = chainArea;
-        for (auto& b : blocks)
+        for (int i : order)
         {
-            b->setBounds(row.removeFromLeft(bw));
+            blocks[(size_t) i]->setBounds(row.removeFromLeft(bw));
             row.removeFromLeft(gap);
         }
+        addCard.setBounds(row.removeFromLeft(bw));
     }
     c.removeFromTop(14);
     panelArea = c;
@@ -1484,8 +1736,9 @@ void ToneForgeEditor::askAi()
     }
 
     juce::String chaine;
-    for (const auto& d : defs)
+    for (int bi : order)
     {
+        const auto& d = defs.getReference(bi);
         chaine << "- " << d.title << " (" << d.kind << ")";
         if (d.info.isNotEmpty())
             chaine << " : " << d.info;
@@ -1566,7 +1819,7 @@ void ToneForgeEditor::applyAi(const juce::String& reply, const juce::String& err
         if (s.startsWithIgnoreCase(kind == 0 ? "M" : kind == 1 ? "P" : "I") && juce::isPositiveAndBelow(i, src.size()))
         {
             const auto e = src[i];   // copie : load() peut toucher aux listes
-            load(e.file, kind);
+            load(e.file, kind == 1 ? target(1) : kind);
             recap << (kind == 0 ? juce::String("Capture : ") : kind == 1 ? u8("Pédale : ") : juce::String("IR : ")) << e.name << "\n";
         }
     };
@@ -1614,7 +1867,10 @@ juce::String ToneForgeEditor::blockKey(int i) const
     return on.isNotEmpty() ? on.upToFirstOccurrenceOf("_", false, false) : i == kAmp ? juce::String("amp") : juce::String("eq");
 }
 
-static int kindOf(int block, int pedal, int amp, int cab, int ampB) { return block == amp ? 0 : block == pedal ? 1 : block == cab ? 2 : block == ampB ? 3 : -1; }
+static int kindOf(int block, int pedalSlot, int amp, int cab, int ampB)
+{
+    return block == amp ? 0 : pedalSlot >= 0 ? ToneForgeProcessor::pedalKind(pedalSlot) : block == cab ? 2 : block == ampB ? 3 : -1;
+}
 
 juce::ValueTree ToneForgeEditor::captureBlock(int i) const
 {
@@ -1626,7 +1882,7 @@ juce::ValueTree ToneForgeEditor::captureBlock(int i) const
     for (auto& id : ids)
         if (auto* p = proc.apvts.getParameter(id))
             v.setProperty(juce::Identifier(id), p->convertFrom0to1(p->getValue()), nullptr);
-    const int kind = kindOf(i, kPedal, kAmp, kCab, kAmpB);
+    const int kind = kindOf(i, slotOfBlock(i), kAmp, kCab, kAmpB);
     if (kind >= 0 && proc.loadedFile(kind) != juce::File())
         v.setProperty("file", proc.loadedFile(kind).getFullPathName(), nullptr);
     if (kind == 3 && proc.irBFile != juce::File())
@@ -1638,7 +1894,7 @@ void ToneForgeEditor::applyBlock(int i, const juce::ValueTree& v)
 {
     if (!v.hasType(juce::Identifier(blockKey(i))))
         return;
-    const int kind = kindOf(i, kPedal, kAmp, kCab, kAmpB);
+    const int kind = kindOf(i, slotOfBlock(i), kAmp, kCab, kAmpB);
     const juce::File f(v.getProperty("file").toString());
     if (kind >= 0 && f.existsAsFile())
         load(f, kind);   // d'abord la capture : charger une pédale l'allume
@@ -1667,6 +1923,11 @@ void ToneForgeEditor::blockMenu(int i)
     const auto files = dir.findChildFiles(juce::File::findFiles, false, "*.tfb", juce::File::FollowSymlinks::no);
     juce::PopupMenu m, sub;
     m.addSectionHeader(upper(defs[i].title));
+    if (unitOf(i).isNotEmpty())
+    {
+        m.addItem(u8("Retirer de la chaîne"), [this, i] { removeBlock(i); });
+        m.addSeparator();
+    }
     m.addItem(u8("Copier les réglages"), [this, i] { clip = captureBlock(i); });
     m.addItem(u8("Coller les réglages"), clip.hasType(juce::Identifier(key)), false, [this, i] { applyBlock(i, clip); });
     m.addSeparator();
@@ -1696,6 +1957,174 @@ void ToneForgeEditor::blockMenu(int i)
         });
     m.addSubMenu("Charger un preset", sub, !files.isEmpty());
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(blocks[(size_t) i].get()));
+}
+
+//==============================================================================
+// Chaîne modulable : ajout, retrait, glisser-déposer. Le processeur garde l'ordre (propriété « chain »).
+std::vector<float> ToneForgeEditor::knobValues(int i) const
+{
+    std::vector<float> v;
+    auto norm = [this](const juce::String& id) { auto* p = proc.apvts.getParameter(id); return p != nullptr ? p->getValue() : 0.5f; };
+    const int s = slotOfBlock(i);
+    if (const auto* lk = s >= 0 ? lookOf(proc.pedalFiles[s]) : nullptr)
+    {
+        const auto r = knobRoles(*lk);
+        for (size_t k = 0; k < lk->knobs.size(); ++k)
+            v.push_back(r[(int) k].isNotEmpty() ? norm(ToneForgeProcessor::pedalId(s) + r[(int) k]) : fixedKnob(*lk, (int) k, proc.pedalFiles[s]));
+    }
+    else if (i != kAmp && i != kCab && i != kAmpB && i != kEq)
+        for (int k = 0; k < juce::jmin(4, defs[i].ids.size()); ++k)
+            v.push_back(norm(defs[i].ids[k]));
+    return v;
+}
+
+int ToneForgeEditor::pedalSlot() const
+{
+    if (isPedalBlock(selected))
+        return slotOfBlock(selected);
+    for (int b : order)
+        if (isPedalBlock(b))
+            return slotOfBlock(b);
+    return 0;
+}
+
+juce::String ToneForgeEditor::unitOf(int i) const
+{
+    if (const int s = slotOfBlock(i); s >= 0)
+        return ToneForgeProcessor::pedalId(s);
+    if (i == 0 || i == kAmp || i == kCab || i == kAmpB || i == kEq)
+        return {};
+    return defs[i].onId.upToFirstOccurrenceOf("_", false, false);
+}
+
+void ToneForgeEditor::rebuildOrder()
+{
+    shownChain = proc.getChain();
+    order = { 0 };
+    for (auto& nm : shownChain)
+        if (nm == "amp")
+            order.insert(order.end(), { (int) kAmp, (int) kCab, (int) kAmpB, (int) kEq });
+        else
+            for (int i = 0; i < defs.size(); ++i)
+                if (unitOf(i) == nm)
+                {
+                    order.push_back(i);
+                    break;
+                }
+    for (auto& b : blocks)
+        b->setVisible(inChain(b->index));
+    if (!inChain(selected))
+        selectBlock(kAmp);
+}
+
+void ToneForgeEditor::insertUnit(int i)
+{
+    const auto u = unitOf(i);
+    auto c = proc.getChain();
+    if (u.isEmpty() || c.contains(u))
+        return;
+    bool pre = isPedalBlock(i);
+    for (const auto& d : fxDefs())
+        if (u == d.key)
+            pre = d.preAmp;
+    if (pre)
+        c.insert(c.indexOf("amp"), u);   // juste avant l'ampli
+    else
+        c.add(u);
+    proc.setChain(c);
+    if (auto* p = isPedalBlock(i) ? nullptr : proc.apvts.getParameter(defs[i].onId))   // un effet ajouté arrive allumé
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(1.f);
+        p->endChangeGesture();
+    }
+    rebuildOrder();
+    resized();
+}
+
+void ToneForgeEditor::removeBlock(int i)
+{
+    auto c = proc.getChain();
+    c.removeString(unitOf(i));
+    proc.setChain(c);
+    if (const int s = slotOfBlock(i); s >= 0)
+        proc.unloadPedal(s);
+    rebuildOrder();
+    resized();
+    refreshLabels();
+    list.repaint();
+}
+
+void ToneForgeEditor::dropBlock(int i, int centreX)
+{
+    std::vector<int> seq;
+    for (int b : order)
+        if (b != i)
+            seq.push_back(b);
+    size_t p = seq.size();
+    for (size_t k = 0; k < seq.size(); ++k)
+        if (blocks[(size_t) seq[k]]->getBounds().getCentreX() > centreX)
+        {
+            p = k;
+            break;
+        }
+    p = std::max<size_t>(p, 1);   // le Gate reste premier
+    auto core = [](int b) { return b == kAmp || b == kCab || b == kAmpB || b == kEq; };
+    if (p < seq.size() && core(seq[p]) && core(seq[p - 1]))   // lâché dans le cœur : avant ou après selon le milieu
+    {
+        const int mid = (blocks[kAmp]->getX() + blocks[kEq]->getRight()) / 2;
+        const auto at = [&seq](int b) { return (size_t) (std::find(seq.begin(), seq.end(), b) - seq.begin()); };
+        p = centreX < mid ? at(kAmp) : at(kEq) + 1;
+    }
+    seq.insert(seq.begin() + (std::ptrdiff_t) p, i);
+    juce::StringArray names;
+    for (int b : seq)
+        if (core(b))
+            names.addIfNotAlreadyThere("amp");
+        else if (const auto u = unitOf(b); u.isNotEmpty())
+            names.add(u);
+    proc.setChain(names);   // une pédale lâchée après l'ampli revient juste avant
+    rebuildOrder();
+    resized();
+    repaint();
+}
+
+void ToneForgeEditor::addMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader("AJOUTER");
+    bool any = false;
+    for (int s = 0; s < ToneForgeProcessor::kPedals; ++s)
+        if (!inChain(blockOfSlot(s)))
+        {
+            m.addItem(u8("Pédale NAM (avant l'ampli)"), [this, s] { insertUnit(blockOfSlot(s)); selectBlock(blockOfSlot(s)); });
+            any = true;
+            break;
+        }
+    for (int i = 0; i < defs.size(); ++i)
+        if (!isPedalBlock(i) && unitOf(i).isNotEmpty() && !inChain(i))
+        {
+            m.addItem(defs[i].title + " (" + defs[i].kind + ")", [this, i] { insertUnit(i); selectBlock(i); });
+            any = true;
+        }
+    if (!any)
+        m.addItem(u8("Chaîne complète"), false, false, nullptr);
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&addCard));
+}
+
+void ToneForgeEditor::AddCard::paint(juce::Graphics& g)
+{
+    const auto r = getLocalBounds().toFloat().reduced(5.f, 4.f);
+    juce::Path box, dash;
+    box.addRoundedRectangle(r, 12.f);
+    const float len[] = { 5.f, 4.f };
+    juce::PathStrokeType(1.5f).createDashedStroke(dash, box, len, 2);
+    g.setColour((isMouseOver() ? tf::acc : tf::dim).withAlpha(0.85f));
+    g.fillPath(dash);
+    g.setFont(juce::FontOptions(30.f, juce::Font::bold));
+    g.drawText("+", r.withTrimmedBottom(18.f).toNearestInt(), juce::Justification::centred);
+    g.setFont(juce::FontOptions(9.f, juce::Font::bold));
+    g.drawText("AJOUTER", r.withTrimmedTop(r.getHeight() - 30.f).withHeight(12.f).toNearestInt(), juce::Justification::centred);
 }
 
 // Tap Tempo (modèle : MIDI.Tap_Tempo d'AmpliTube) : moyenne des 4 derniers intervalles -> temps du delay.

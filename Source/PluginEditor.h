@@ -47,9 +47,23 @@ private:
         ToneForgeEditor& ed;
         int index;
         float hov = 0.f, selA = 0.f, onA = 1.f;   // animations (~150 ms) : survol, sélection, marche
+        juce::Rectangle<int> home;   // position au début d'un glisser-déposer
+        bool dragging = false;
         Block(ToneForgeEditor& e, int i) : ed(e), index(i) { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
         void paint(juce::Graphics&) override;
+        void mouseDown(const juce::MouseEvent&) override;
+        void mouseDrag(const juce::MouseEvent&) override;
         void mouseUp(const juce::MouseEvent&) override;
+    };
+    // Carte « + » au bout de la chaîne : ajoute une pédale NAM ou un effet absent.
+    struct AddCard : juce::Component
+    {
+        ToneForgeEditor& ed;
+        explicit AddCard(ToneForgeEditor& e) : ed(e) { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+        void paint(juce::Graphics&) override;
+        void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+        void mouseExit(const juce::MouseEvent&) override { repaint(); }
+        void mouseUp(const juce::MouseEvent&) override { ed.addMenu(); }
     };
     struct RightClick : juce::MouseListener
     {
@@ -99,8 +113,16 @@ private:
     const juce::Array<Entry>& lib() const { return tab == 0 ? models : tab == 1 ? pedals : irs; }
     // 3 = ampli B, 4 = IR B : les onglets Amplis/Baffles chargent dans B quand son bloc est affiché
     juce::File current(int kind) const { return proc.loadedFile(kind); }
-    static int blockOf(int kind) { return kind == 0 ? kAmp : kind == 1 ? kPedal : kind == 2 ? kCab : kAmpB; }
-    int target(int t) const { return selected == kAmpB && t != 1 ? (t == 0 ? 3 : 4) : t; }
+    static int blockOf(int kind)
+    {
+        const int s = ToneForgeProcessor::pedalSlotOf(kind);
+        return kind == 0 ? kAmp : s >= 0 ? blockOfSlot(s) : kind == 2 ? kCab : kAmpB;
+    }
+    // Onglet Pédales : charge dans la pédale affichée, sinon la première de la chaîne
+    int target(int t) const
+    {
+        return selected == kAmpB && t != 1 ? (t == 0 ? 3 : 4) : t == 1 ? ToneForgeProcessor::pedalKind(pedalSlot()) : t;
+    }
     void setTab(int t);
     void load(const juce::File&, int kind);
     void pick();
@@ -125,8 +147,24 @@ private:
     TfLook look;
     juce::Array<BlockDef> defs;
     std::vector<std::unique_ptr<Block>> blocks;
-    enum { kPedal = 2, kAmp = 3, kCab = 4, kAmpB = 5 };   // blocs NAM et IR dans la chaîne
+    enum { kPedal = 2, kAmp = 3, kCab = 4, kAmpB = 5, kEq = 6, kPedal2 = 10 };   // blocs NAM et IR ; pédales 2-4 = 10..12
     int selected = kAmp;
+    // Chaîne affichée : Gate, unités avant l'ampli, cœur fixe (Ampli, Baffle, Ampli B, EQ), unités après.
+    static bool isPedalBlock(int i) { return i == kPedal || i >= kPedal2; }
+    static int slotOfBlock(int i) { return i == kPedal ? 0 : i >= kPedal2 ? i - kPedal2 + 1 : -1; }
+    static int blockOfSlot(int s) { return s == 0 ? kPedal : kPedal2 + s - 1; }
+    int pedalSlot() const;
+    juce::String unitOf(int i) const;   // nom d'unité du processeur, vide pour les blocs fixes
+    std::vector<float> knobValues(int i) const;   // boutons (0-1) dessinés sur la carte du bloc
+    bool inChain(int i) const { return std::find(order.begin(), order.end(), i) != order.end(); }
+    void rebuildOrder();
+    void insertUnit(int i);
+    void removeBlock(int i);
+    void dropBlock(int i, int centreX);
+    void addMenu();
+    std::vector<int> order;
+    juce::StringArray shownChain;
+    AddCard addCard { *this };
 
     juce::TextEditor search;
     juce::TextButton ampTab { "Amplis" }, pedTab { u8("Pédales") }, cabTab { "Baffles" }, rescanBtn { "Actualiser" }, fileBtn { "Fichier..." };
