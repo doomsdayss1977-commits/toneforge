@@ -874,15 +874,15 @@ void ToneForgeEditor::refreshLabels()
 {
     auto name = [](const juce::File& f) { return f == juce::File() ? juce::String("(aucun)") : f.getFileNameWithoutExtension(); };
     const bool ped = selected == kPedal, ab = selected == kAmpB;   // l'écran montre la pédale / l'ampli B quand son bloc est affiché
-    nameLbl.setText(name(ped ? proc.pedalFile : ab ? proc.modelBFile : proc.modelFile), juce::dontSendNotification);
+    nameLbl.setText(name(ped ? proc.pedalFiles[0] : ab ? proc.modelBFile : proc.modelFile), juce::dontSendNotification);
     warnLbl.setText(proc.modelWarning(ped ? 1 : ab ? 3 : 0), juce::dontSendNotification);
     // Chemin court : relatif à la bibliothèque quand la capture en vient
     auto path = [](const juce::File& f) { return f.isAChildOf(kRoot) ? f.getRelativePathFrom(kRoot).replaceCharacter('\\', '/') : f.getFullPathName(); };
     if (selected == kAmp)
         panelInfo.setText(path(proc.modelFile), juce::dontSendNotification);
     else if (ped)
-        panelInfo.setText(proc.pedalFile == juce::File() ? u8("Aucune pédale : choisis-en une dans Pédales.")
-                                                         : path(proc.pedalFile), juce::dontSendNotification);
+        panelInfo.setText(proc.pedalFiles[0] == juce::File() ? u8("Aucune pédale : choisis-en une dans Pédales.")
+                                                         : path(proc.pedalFiles[0]), juce::dontSendNotification);
     else if (selected == kCab)
         panelInfo.setText(proc.irFile == juce::File() ? juce::String("Aucune IR : choisis-en une dans Baffles.")
                                                       : path(proc.irFile), juce::dontSendNotification);
@@ -899,7 +899,7 @@ void ToneForgeEditor::refreshLabels()
 bool ToneForgeEditor::blockOn(int i) const
 {
     const auto& d = defs.getReference(i);
-    if ((i == kPedal && proc.pedalFile == juce::File()) || (i == kAmpB && proc.modelBFile == juce::File()))
+    if ((i == kPedal && proc.pedalFiles[0] == juce::File()) || (i == kAmpB && proc.modelBFile == juce::File()))
         return false;
     if (d.onId.isNotEmpty())
         return proc.apvts.getRawParameterValue(d.onId)->load() > 0.5f;
@@ -910,7 +910,7 @@ bool ToneForgeEditor::blockOn(int i) const
 
 void ToneForgeEditor::toggleBlock(int i)
 {
-    if (i == kPedal && proc.pedalFile == juce::File())   // rien à allumer : ouvrir la liste des pédales
+    if (i == kPedal && proc.pedalFiles[0] == juce::File())   // rien à allumer : ouvrir la liste des pédales
         return selectBlock(kPedal);
     if (i == kAmpB && proc.modelBFile == juce::File())   // idem : ouvrir la liste des amplis pour B
         return selectBlock(kAmpB);
@@ -1256,8 +1256,8 @@ void ToneForgeEditor::renderBackground()
     }
     const auto logoArea = gr.withTrimmedBottom(40.f).toNearestInt();
     const bool brandLogo = selected == kAmp && brand.isNotEmpty() && brand != "Autres";
-    const auto pedBrand = proc.pedalFile == juce::File() ? juce::String()
-                        : brandOf(proc.pedalFile.getParentDirectory().getFileName() + " " + proc.pedalFile.getFileNameWithoutExtension(), true);
+    const auto pedBrand = proc.pedalFiles[0] == juce::File() ? juce::String()
+                        : brandOf(proc.pedalFiles[0].getParentDirectory().getFileName() + " " + proc.pedalFiles[0].getFileNameWithoutExtension(), true);
     const auto text = brandLogo ? brand
                     : selected == kPedal && pedBrand.isNotEmpty() && pedBrand != "Autres" ? pedBrand : defs[selected].title;
     const auto lc = brandLogo ? sk.logo : Colour(0xfff4f1e8);
