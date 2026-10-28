@@ -166,6 +166,12 @@ private:
     int ticks = 0;
     int hoverRow = -1;   // ligne de la liste sous la souris (suivie par le timer)
     float holdIn = -60.f, holdOut = -60.f;   // crêtes maintenues des vumètres LED (dB)
+    juce::Rectangle<int> dynBar;   // indicateur A -> B de l'attaque, sur la grille du bloc Ampli B
+    bool dynVisible() const
+    {
+        return selected == kAmpB && !aiOpen && proc.apvts.getRawParameterValue("ampb_on")->load() > 0.5f
+            && proc.apvts.getRawParameterValue("dyn_amt")->load() > 0.f;
+    }
     int holdInT = 0, holdOutT = 0;
     float pulse = 0.f;   // position (0-1) de l'impulsion qui parcourt le câble de la chaîne
     juce::Rectangle<int> cableStrip() const;

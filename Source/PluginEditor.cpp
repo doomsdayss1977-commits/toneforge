@@ -518,7 +518,8 @@ ToneForgeEditor::ToneForgeEditor(ToneForgeProcessor& p) : AudioProcessorEditor(&
     defs.add({ u8("Pédale"), "NAM", "pedal_on", {}, { "pedal_in", "pedal_out" }, { u8("Entrée (dB)"), "Sortie (dB)" } });
     defs.add({ "Ampli", "NAM", {}, {}, { "input", "output" }, { u8("Entrée (dB)"), "Sortie (dB)" } });
     defs.add({ "Baffle", "IR", "ir_on", {}, {}, {} });
-    defs.add({ "Ampli B", "NAM", "ampb_on", {}, { "ampb_in", "ampb_out", "ab_mix" }, { u8("Entrée (dB)"), "Sortie (dB)", u8("Mélange A/B") } });
+    defs.add({ "Ampli B", "NAM", "ampb_on", {}, { "ampb_in", "ampb_out", "ab_mix", "dyn_amt", "dyn_thr", "dyn_range", "dyn_rel" },
+               { u8("Entrée (dB)"), "Sortie (dB)", u8("Mélange A/B"), "Attaque", "Seuil (dB)", "Plage (dB)", "Retour (ms)" } });
     defs.add({ "EQ", u8("TONALITÉ"), {}, "Graves 120 Hz, Médiums 800 Hz, Aigus 3,5 kHz", { "bass", "mid", "treble" },
                { "Graves", u8("Médiums"), "Aigus" } });
     for (size_t i = 1; i < fx.size(); ++i)
@@ -1078,6 +1079,8 @@ void ToneForgeEditor::timerCallback()
     holdPeak(holdIn, holdInT, needleIn);
     holdPeak(holdOut, holdOutT, needleOut);
     repaint(meterIn.getUnion(meterOut).expanded(2));
+    if (dynVisible())
+        repaint(dynBar.expanded(20, 4));
 
     // Capture/IR chargée d'ailleurs (OSC, état restauré) : affichage à jour
     if (const int ls = proc.loadSerial.load(); ls != seenLoad)
@@ -1240,6 +1243,17 @@ void ToneForgeEditor::renderBackground()
     grille(g, gr, selected == kCab ? Colour(0xff3a2c1c) : sk.grille);
     g.setColour(Colours::black);
     g.drawRect(gr, 1.5f);
+    if (dynVisible())   // indicateur de l'attaque : part de B jouée en ce moment
+    {
+        const auto bar = dynBar.toFloat();
+        g.setColour(Colours::black.withAlpha(0.7f));
+        g.fillRoundedRectangle(bar, 4.f);
+        g.setColour(tf::amber);
+        g.fillRoundedRectangle(bar.withWidth(juce::jmax(8.f, bar.getWidth() * proc.dynPos.load())), 4.f);
+        g.setFont(juce::FontOptions(monoFont(), 11.f, juce::Font::bold));
+        g.drawText("A", bar.translated(-16.f, 0.f).withWidth(12.f).expanded(0.f, 4.f), juce::Justification::centred);
+        g.drawText("B", bar.withX(bar.getRight() + 4.f).withWidth(12.f).expanded(0.f, 4.f), juce::Justification::centred);
+    }
     const auto logoArea = gr.withTrimmedBottom(40.f).toNearestInt();
     const bool brandLogo = selected == kAmp && brand.isNotEmpty() && brand != "Autres";
     const auto pedBrand = proc.pedalFile == juce::File() ? juce::String()
@@ -1399,7 +1413,8 @@ void ToneForgeEditor::resized()
     head.removeFromRight(8);
     tapBtn.setBounds(head.removeFromRight(90).reduced(0, 2));
     q.removeFromTop(4);
-    const int kw = 110, kg = 18, n = (int) knobs.size();
+    const int kg = 18, n = (int) knobs.size();
+    const int kw = n > 0 ? juce::jmin(110, (q.getWidth() - (n - 1) * kg) / n) : 110;   // rétrécit si le bloc a beaucoup de réglages
     q = q.withSizeKeepingCentre(juce::jmax(0, n * kw + (n - 1) * kg), q.getHeight());
     for (auto& k : knobs)
     {
@@ -1409,6 +1424,7 @@ void ToneForgeEditor::resized()
         k->slider.setBounds(col);
     }
     panelInfo.setBounds(grilleArea.reduced(20, 10).removeFromBottom(24));
+    dynBar = juce::Rectangle<int>(260, 8).withCentre({ grilleArea.getCentreX(), panelInfo.getY() - 8 });
     {
         auto lr = grilleArea.reduced(20, 10).removeFromTop(30);
         loopStopBtn.setBounds(lr.removeFromRight(40));

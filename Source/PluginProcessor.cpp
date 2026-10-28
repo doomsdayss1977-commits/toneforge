@@ -111,6 +111,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ToneForgeProcessor::layout()
     p.push_back(std::make_unique<P>("ampb_out", "Ampli B sortie (dB)", R(-24.f, 24.f), 0.f));
     p.push_back(std::make_unique<P>("ab_mix", u8("Mélange A/B"), R(0.f, 1.f), 0.5f));
     p.push_back(std::make_unique<P>("macro", "Macro", R(0.f, 1.f), 0.f));
+    // Attaque : la force du jeu fait glisser le mélange de A vers B (ajouté en fin de liste)
+    p.push_back(std::make_unique<P>("dyn_amt", "Attaque A>B", R(0.f, 1.f), 0.f));
+    p.push_back(std::make_unique<P>("dyn_thr", "Attaque seuil (dB)", R(-60.f, 0.f), -30.f));
+    p.push_back(std::make_unique<P>("dyn_range", "Attaque plage (dB)", R(3.f, 36.f), 12.f));
+    p.push_back(std::make_unique<P>("dyn_rel", "Attaque retour (ms)", R(20.f, 1000.f, 0.f, 0.4f), 200.f));
     return { p.begin(), p.end() };
 }
 
@@ -129,6 +134,8 @@ void ToneForgeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     for (auto& e : fx)
         e->setSampleRate((float) sampleRate);
     bufB.assign((size_t) samplesPerBlock, 0.f);
+    dynMix.assign((size_t) samplesPerBlock, 0.f);
+    dynEnv = 0.f;
     if (loopBuf.getNumSamples() != (int) (sampleRate * 60.0))   // même taux : la boucle survit à un nouveau prepare
     {
         loopBuf.setSize(2, (int) (sampleRate * 60.0));
@@ -222,6 +229,24 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     juce::dsp::AudioBlock<float> monoBlock(&x, 1, (size_t) n);
     juce::dsp::ProcessContextReplacing<float> monoCtx(monoBlock);
 
+    // Attaque : suiveur de crête sur l'entrée brute (avant gate et compresseur), attaque 1 ms, retour réglable.
+    // Niveau en dB -> part de B : 0 sous le seuil, 1 à seuil + plage.
+    const float dynAmt = dynMix.empty() ? 0.f : v("dyn_amt");
+    if (dynAmt > 0.f)
+    {
+        const float att = std::exp(-1.f / (0.001f * (float) sr)),
+                    rel = std::exp(-1.f / (0.001f * v("dyn_rel") * (float) sr));
+        const float thr = v("dyn_thr"), range = v("dyn_range");
+        const int m = juce::jmin(n, (int) dynMix.size());   // au-delà (bloc plus grand qu'annoncé) : dernière valeur
+        for (int i = 0; i < n; ++i)
+        {
+            const float s = std::abs(x[i]);
+            dynEnv = s + (s > dynEnv ? att : rel) * (dynEnv - s);
+            if (i < m)
+                dynMix[(size_t) i] = juce::jlimit(0.f, 1.f, (juce::Decibels::gainToDecibels(dynEnv, -100.f) - thr) / range);
+        }
+    }
+
     if (v("gate_on") > 0.5f)
     {
         gate.setThreshold(v("gate"));
@@ -250,6 +275,7 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         const float mix = v("ab_mix"), gbIn = juce::Decibels::decibelsToGain(v("ampb_in")),
                     gbOut = juce::Decibels::decibelsToGain(v("ampb_out"));
         const float latA = amp.loaded ? amp.latency.load() : 0.f, latB = ampB.latency.load();
+        float shownMix = mix;
         chunks(n, bufB.size(), [&](int o, int c)
         {
             float* a = x + o;
@@ -272,9 +298,20 @@ void ToneForgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                 cab.process(juce::dsp::ProcessContextReplacing<float>(ba));
             if (irBLoaded)
                 cabB.process(juce::dsp::ProcessContextReplacing<float>(bb));
-            juce::FloatVectorOperations::multiply(a, 1.f - mix, c);
-            juce::FloatVectorOperations::addWithMultiply(a, b, mix, c);
+            if (dynAmt > 0.f)
+                for (int i = 0; i < c; ++i)
+                {
+                    const float t = dynMix[(size_t) juce::jmin(o + i, (int) dynMix.size() - 1)];
+                    shownMix = mix + dynAmt * (t - mix);   // Attaque à fond : l'enveloppe remplace le mélange fixe
+                    a[i] += shownMix * (b[i] - a[i]);
+                }
+            else
+            {
+                juce::FloatVectorOperations::multiply(a, 1.f - mix, c);
+                juce::FloatVectorOperations::addWithMultiply(a, b, mix, c);
+            }
         });
+        dynPos.store(shownMix);
     }
     else
     {

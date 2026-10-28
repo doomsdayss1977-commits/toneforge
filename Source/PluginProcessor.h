@@ -63,6 +63,7 @@ public:
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float> inPeak { 0.f }, outPeak { 0.f };   // crêtes lues (et remises à 0) par les vumètres
     std::atomic<float> oscInPeak { 0.f }, oscOutPeak { 0.f };   // idem pour le serveur OSC
+    std::atomic<float> dynPos { 0.f };   // part de B réellement jouée (indicateur de l'attaque)
     juce::CriticalSection fileLock;
     std::atomic<int> loadSerial { 0 };   // incrémenté à chaque capture/IR chargée (l'interface se met à jour)
 
@@ -141,6 +142,8 @@ private:
     int maxBlock = 512;
     std::atomic<float> lastMacro { -1.f };   // écrit aussi par setStateInformation
     bool bActive = false;   // voie B active au bloc précédent (thread audio)
+    float dynEnv = 0.f;   // enveloppe de l'attaque, entrée brute (thread audio)
+    std::vector<float> dynMix;   // part de B voulue par l'attaque, par échantillon
     juce::AudioBuffer<float> loopBuf;   // 2 canaux, 60 s
     int clickPos = 1 << 30, clickBeat = 0;
     double sinceBeat = 1e9;
