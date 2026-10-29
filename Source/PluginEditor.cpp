@@ -7,6 +7,13 @@
 // Bibliothèque = premier dossier parent du programme qui contient models/ ; sinon %APPDATA%\ToneForge.
 static juce::File findLibRoot()
 {
+   #if JUCE_IOS
+    // iPhone : Documents de l'app, visible dans l'app Fichiers (« Sur mon iPhone > ToneForge »).
+    auto docs = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    for (auto sub : { "models", "pedals", "irs" })
+        docs.getChildFile(sub).createDirectory();
+    return docs;
+   #endif
     for (auto d = juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory();
          !d.isRoot(); d = d.getParentDirectory())
         if (d.getChildFile("models").isDirectory())

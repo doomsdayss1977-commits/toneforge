@@ -13,3 +13,4 @@
 - Piège : `renderBackground` imposait la couleur `ink` → valeur des molettes invisible ; `MouseEvent::eventType` n'existe pas → survol suivi par le timer.
 
 - 2026-10-28 : étape 1 moteur modulable (réserves NAM/IR/EQ/Gate/effets, route A|B, mélangeur, migration presets) testée par l'utilisateur : son identique, presets, A/B, pédales, attaque, sauvegarde OK. Commitée.
+- 2026-10-28 : cible iOS (Standalone seul, Documents visibles dans Fichiers, paysage) + workflow GitHub Actions .github/workflows/ios.yml ; build Windows inchangé vérifié.

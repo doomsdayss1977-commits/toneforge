@@ -1,0 +1,55 @@
+# Compile ToneForge pour iPhone sur un Mac GitHub, sans signature : Sideloadly signe à l'installation.
+# third_party/ n'est pas dans le dépôt : on reclone aux mêmes commits que E:\Dev\ToneForge\third_party.
+name: iOS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ToneForge
+
+      - name: Dépendances
+        run: |
+          fetch() { git init -q "$1"; git -C "$1" fetch -q --depth 1 "$2" "$3"; git -C "$1" checkout -q FETCH_HEAD; }
+          fetch JUCE https://github.com/juce-framework/JUCE.git 3cc224c3e84d6acbabf62358ba1ccbf133cd2095
+          NAM=ToneForge/third_party/NeuralAmpModelerCore
+          fetch $NAM https://github.com/sdatkinson/NeuralAmpModelerCore.git 0b3d3c97b0859a3a8c92a8628c4dd89a25eb5842
+          git -C $NAM submodule update -q --init --depth 1 Dependencies/eigen
+          AW=ToneForge/third_party/airwindows
+          git init -q $AW
+          git -C $AW sparse-checkout set plugins/WinVST/Pressure5 plugins/WinVST/ChorusEnsemble plugins/WinVST/TapeDelay2 plugins/WinVST/Galactic3
+          git -C $AW fetch -q --depth 1 --filter=blob:none https://github.com/airwindows/airwindows.git 5043ff620c2418cba9137196990753fc89d0f829
+          git -C $AW checkout -q FETCH_HEAD
+
+      - name: Configurer
+        run: |
+          cmake -S ToneForge -B build -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DJUCE_DIR="$PWD/JUCE"
+
+      - name: Compiler
+        run: |
+          cmake --build build --config Release --target ToneForge_Standalone -- -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+
+      - name: Emballer en .ipa
+        run: |
+          APP=$(find build -name "ToneForge.app" -type d | head -1)
+          echo "App : $APP"
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qr ToneForge.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ToneForge-ipa
+          path: ToneForge.ipa
