@@ -12,6 +12,25 @@ static juce::File findLibRoot()
     auto docs = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
     for (auto sub : { "models", "pedals", "irs" })
         docs.getChildFile(sub).createDirectory();
+    // Appareils Apple (Windows) dépose tout à plat : un .zip est décompressé tel quel (dossiers gardés),
+    // les fichiers isolés sont rangés (.wav → irs, .nam → pedals si gear_type « pedal », sinon models).
+    for (auto& f : docs.findChildFiles(juce::File::findFiles, false))
+    {
+        const auto ext = f.getFileExtension().toLowerCase();
+        if (ext == ".zip")
+        {
+            juce::ZipFile zip(f);
+            if (zip.uncompressTo(docs).wasOk())
+                f.deleteFile();
+        }
+        else if (ext == ".wav")
+            f.moveFileTo(docs.getChildFile("irs").getChildFile(f.getFileName()));
+        else if (ext == ".nam")
+        {
+            const bool pedal = f.loadFileAsString().contains("\"gear_type\": \"pedal\"");
+            f.moveFileTo(docs.getChildFile(pedal ? "pedals" : "models").getChildFile(f.getFileName()));
+        }
+    }
     return docs;
    #endif
     for (auto d = juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory();
