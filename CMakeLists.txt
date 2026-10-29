@@ -37,7 +37,8 @@ juce_add_plugin(ToneForge
 target_sources(ToneForge
     PRIVATE
         Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp)
+        Source/PluginEditor.cpp
+        Source/PhoneEditor.cpp)
 
 # Effets Airwindows (MIT), compilés tels quels avec un shim du SDK VST2 (Source/aw).
 # Chaque .cpp définit createEffectInstance : renommé par effet pour éviter les doublons.

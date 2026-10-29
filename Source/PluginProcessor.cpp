@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "PhoneEditor.h"
 #include "OscServer.h"
 #include "NAM/get_dsp.h"
 
@@ -977,7 +978,16 @@ void ToneForgeProcessor::runNamUnit(int i, float* x, int n)
     });
 }
 
-juce::AudioProcessorEditor* ToneForgeProcessor::createEditor() { return new ToneForgeEditor(*this); }
+juce::AudioProcessorEditor* ToneForgeProcessor::createEditor()
+{
+   #if JUCE_IOS
+    return new PhoneEditor(*this);
+   #else
+    if (juce::SystemStats::getEnvironmentVariable("TF_PHONE", {}) == "1")   // essai de l'interface iPhone sur PC
+        return new PhoneEditor(*this);
+    return new ToneForgeEditor(*this);
+   #endif
+}
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new ToneForgeProcessor(); }
 
