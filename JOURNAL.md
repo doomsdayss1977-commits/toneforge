@@ -15,3 +15,4 @@
 - 2026-10-28 : étape 1 moteur modulable (réserves NAM/IR/EQ/Gate/effets, route A|B, mélangeur, migration presets) testée par l'utilisateur : son identique, presets, A/B, pédales, attaque, sauvegarde OK. Commitée.
 - 2026-10-28 : cible iOS (Standalone seul, Documents visibles dans Fichiers, paysage) + workflow GitHub Actions .github/workflows/ios.yml ; build Windows inchangé vérifié.
 - 2026-10-28 : iOS, Appareils Apple dépose les fichiers à plat → décompression des .zip et rangement des .nam/.wav isolés au démarrage.
+- 2026-10-28 : ToneForge iOS validé à 100 % par l'utilisateur sur iPhone + USB IV (son, amplis, pédales, IR ; app test 14,8 ms).
