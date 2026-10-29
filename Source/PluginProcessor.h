@@ -10,8 +10,8 @@ juce::File libraryRoot();
 juce::String captureBrand(const juce::String& s, bool pedal);
 class OscServer;
 
-// Chaîne : gate -> [unités avant l'ampli] -> gain d'entrée -> ampli NAM (A/B) -> IR -> EQ 3 bandes -> [unités après l'ampli] -> volume
-// Unités = 4 pédales NAM (avant l'ampli seulement) et les effets Airwindows, dans l'ordre de getChain().
+// Routage (modèle : chaîne d'AmpliTube) : [avant, mono] -> séparation -> chaînes A et B en parallèle -> mélangeur
+// (balance, volume, panoramique) -> [après, stéréo] -> volume. Toute unité va n'importe où, une fois (cf. getRoute).
 class ToneForgeProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
@@ -41,27 +41,48 @@ public:
     void setStateInformation(const void*, int) override;
 
     // Chargement depuis le thread de l'interface ; renvoie un message d'erreur vide si OK.
-    static constexpr int kPedals = 4;   // emplacements de pédale NAM
+    // Réserves (paramètres statiques) : NAM 0 ampli A, 1 ampli B, 2..5 pédales 1..4, 6..7 libres ; IR 0 baffle A, 1 baffle B, 2..3
+    static constexpr int kPedals = 4, kNams = 8, kIrs = 4, kEqs = 2, kGates = 2, kFxCopies = 2;
     static juce::String pedalId(int i) { return i == 0 ? juce::String("pedal") : "pedal" + juce::String(i + 1); }   // préfixe des paramètres
-    juce::String loadModel(const juce::File&, bool isPedal = false, bool ampB = false, int slot = 0);
-    void unloadPedal(int slot);
-    juce::String loadIR(const juce::File&, bool cabB = false);
-    void unloadB(bool model, bool ir);   // retire la capture et/ou l'IR de l'ampli B
-    juce::File modelFile, irFile, modelBFile, irBFile, pedalFiles[kPedals];   // écrits sous fileLock (setStateInformation peut venir d'un autre fil)
-    // Genre de fichier : 0 ampli, 1 pédale 1, 2 IR, 3 ampli B, 4 IR B, 5..7 pédales 2..4
+    static juce::String namParamId(int i, int what);   // what : 0 marche, 1 entrée, 2 sortie, 3 tone, 4 blend
+    juce::String loadNam(int i, const juce::File&);
+    void unloadNam(int i);
+    juce::String loadIr(int i, const juce::File&);
+    void unloadIr(int i);
+    juce::String loadModel(const juce::File& f, bool isPedal = false, bool ampB = false, int slot = 0)
+    {
+        return loadNam(isPedal ? 2 + slot : ampB ? 1 : 0, f);
+    }
+    void unloadPedal(int slot) { unloadNam(2 + slot); }
+    juce::String loadIR(const juce::File& f, bool cabB = false) { return loadIr(cabB ? 1 : 0, f); }
+    void unloadB(bool model, bool ir)   // retire la capture et/ou l'IR de l'ampli B
+    {
+        if (model)
+            unloadNam(1);
+        if (ir)
+            unloadIr(1);
+    }
+    juce::File namFiles[kNams], irFiles[kIrs];   // écrits sous fileLock (setStateInformation peut venir d'un autre fil)
+    juce::File &modelFile = namFiles[0], &modelBFile = namFiles[1], &irFile = irFiles[0], &irBFile = irFiles[1];
+    juce::File* const pedalFiles = namFiles + 2;
+    // Genre de fichier : 0 ampli, 1 pédale 1, 2 IR, 3 ampli B, 4 IR B, 5..7 pédales 2..4, 8..9 NAM 7..8, 10..11 IR 3..4
     static int pedalKind(int slot) { return slot == 0 ? 1 : 4 + slot; }
-    static int pedalSlotOf(int kind) { return kind == 1 ? 0 : kind >= 5 ? kind - 4 : -1; }
+    static int pedalSlotOf(int kind) { return kind == 1 ? 0 : kind >= 5 && kind <= 7 ? kind - 4 : -1; }
+    static int namOfKind(int kind)
+    {
+        const int p = pedalSlotOf(kind);
+        return p >= 0 ? 2 + p : kind == 0 ? 0 : kind == 3 ? 1 : kind == 8 || kind == 9 ? kind - 2 : -1;
+    }
+    static int irOfKind(int kind) { return kind == 2 ? 0 : kind == 4 ? 1 : kind == 10 || kind == 11 ? kind - 8 : -1; }
     juce::File loadedFile(int kind) const   // copie sous verrou
     {
         const juce::ScopedLock sl(fileLock);
-        if (const int p = pedalSlotOf(kind); p >= 0)
-            return pedalFiles[p];
-        return kind == 0 ? modelFile : kind == 2 ? irFile : kind == 3 ? modelBFile : irBFile;
+        const int i = namOfKind(kind);
+        return i >= 0 ? namFiles[i] : irFiles[juce::jmax(0, irOfKind(kind))];
     }
-    juce::String modelWarning(int kind = 0) const   // 0 ampli, pédales, 3 ampli B ; ex. capture rééchantillonnée
+    juce::String modelWarning(int kind = 0) const   // captures NAM ; ex. capture rééchantillonnée
     {
-        const int ps = pedalSlotOf(kind);
-        const auto& s = ps >= 0 ? pedals[ps] : kind == 3 ? ampB : amp;
+        const auto& s = nams[juce::jmax(0, namOfKind(kind))];
         if (kind == 3 && !s.loaded)
             return u8("Aucune capture B : clique un ampli dans la liste (le bloc B ne fait rien sans elle)");
         const int c = s.captureRate, p = s.projectRate;
@@ -95,15 +116,19 @@ public:
     juce::ValueTree macroTree() { return apvts.state.getOrCreateChildWithName("Macro", nullptr); }
     juce::CriticalSection stateLock;
 
-    // Ordre de la chaîne : noms d'unités (clés d'effet, pedalId, et « amp » qui sépare avant/après l'ampli).
-    // Absente de la chaîne = retirée (ne traite rien). Sauvé dans l'état (propriété « chain »).
-    static juce::StringArray defaultChain() { return { "comp", "pedal", "amp", "chorus", "delay", "reverb" }; }
-    juce::StringArray getChain() const { const juce::ScopedLock sl(chainNamesLock); return chainNames; }
-    void setChain(const juce::StringArray&);   // thread de messages ; corrige l'ordre (pédales avant l'ampli, pas de doublon)
+    // Routage : avant « split » chaîne A « | » chaîne B « mix » après. Unités : gate1-2, eq1-2, ir1-4, nam1-8, effets
+    // (clé, et clé + « 2 » pour le 2e exemplaire). Absente = retirée. Sauvé dans l'état (propriété « chain »).
+    // La chaîne B ne joue que si « ampb_on » ; la plus courte des deux attend l'autre (latences NAM).
+    static juce::StringArray defaultRoute();
+    juce::StringArray getRoute() const { const juce::ScopedLock sl(chainNamesLock); return chainNames; }
+    void setRoute(const juce::StringArray&);   // thread de messages ; corrige (noms connus, sans doublon, repères complets)
+    // Vue de l'ancienne interface (pédales et effets autour de « amp » = tout le reste) : à retirer avec elle
+    juce::StringArray getChain() const;
+    void setChain(const juce::StringArray&);
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
-    void updateEq();
+    void updateEq(int i);
 
     // Rééchantillonnage autour de NAM quand la capture n'est pas au taux du projet (protégé par le verrou de l'emplacement).
     struct Resampler
@@ -125,19 +150,20 @@ private:
         std::atomic<int> captureRate { 0 }, projectRate { 0 };   // capture rééchantillonnée (0 = non), lus par l'interface
         std::atomic<bool> loaded { false };   // une capture est chargée (lu sans verrou par le thread audio)
         std::atomic<float> latency { 0.f };   // retard du rééchantillonnage, en échantillons du projet (mesuré)
-    } pedals[kPedals], amp, ampB;   // ampB : ampli B en parallèle de A
+    } nams[kNams];
     // Pédale : Tone (plateau d'aigus après la capture), Blend (mélange avec le son direct, retardé comme la capture)
     struct PedalExtra
     {
         float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0, tone = -1.f;
         juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> dry { 512 };
-    } pedalX[kPedals];
-    std::atomic<float>* pedPar[kPedals][5] {};   // on, in, out, tone, mix (cache des paramètres)
+    } namX[kNams];
+    std::atomic<float>* namPar[kNams][5] {};   // on, in, out, tone, mix (cache des paramètres)
     std::vector<float> dryBuf;   // son direct d'une pédale (maxBlock)
-    void runPedal(int slot, float* x, int n);
-    // Chaîne côté audio : codes 0..3 = effet fxDefs()[k], 10+i = pédale i, kAmpUnit = l'ampli
-    static constexpr int kAmpUnit = 99;
-    struct Chain { int n = 0; int u[16] {}; } chainPending, chainCur;
+    void runNamUnit(int i, float* x, int n);
+    float namLatency(int i) const;   // 0 si éteinte ou vide
+    float rowLatency(int from, int to) const;   // NAM de chainCur.u[from..to)
+    // Routage côté audio : codes d'unité (cf. unitCode dans le .cpp)
+    struct Chain { int n = 0; int u[40] {}; } chainPending, chainCur;
     juce::SpinLock chainLock;   // le thread audio ne fait qu'un try-lock
     std::atomic<bool> chainDirty { false };
     mutable juce::CriticalSection chainNamesLock;
@@ -148,15 +174,19 @@ private:
     static void processResampled(Resampler&, nam::DSP*, float* x, int n);   // DSP nul = identité (mesure)
     void runNam(NamSlot&, float* x, int n, float gainIn, float gainOut);
 
-    juce::dsp::NoiseGate<float> gate;
-    juce::dsp::Convolution cab { juce::dsp::Convolution::NonUniform { 256 } };
-    juce::dsp::Convolution cabB { juce::dsp::Convolution::NonUniform { 256 } };
-    std::atomic<bool> irLoaded { false }, irBLoaded { false };
+    juce::dsp::NoiseGate<float> gates[kGates];
+    std::atomic<float>* gatePar[kGates][2] {};   // on, seuil
+    using NU = juce::dsp::Convolution::NonUniform;
+    juce::dsp::Convolution cabs[kIrs] { juce::dsp::Convolution { NU { 256 } }, juce::dsp::Convolution { NU { 256 } },
+                                        juce::dsp::Convolution { NU { 256 } }, juce::dsp::Convolution { NU { 256 } } };
+    std::atomic<bool> irLoaded[kIrs] {};
+    std::atomic<float>* irOn[kIrs] {};
     std::vector<float> bufB;   // voie B (maxBlock)
     // Alignement A/B : la voie la moins retardée attend l'autre (sinon filtrage en peigne au mélange)
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> alignA { 512 }, alignB { 512 };
     using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
-    juce::dsp::ProcessorChain<Filter, Filter, Filter> eq;
+    juce::dsp::ProcessorChain<Filter, Filter, Filter> eqs[kEqs];
+    std::atomic<float>* eqPar[kEqs][3] {};
     std::vector<std::unique_ptr<AudioEffect>> fx;   // un par entrée de fxDefs()
     std::vector<std::atomic<float>*> fxOn;               // paramètres en cache (pas d'allocation en audio)
     std::vector<std::vector<std::atomic<float>*>> fxPar;
@@ -168,7 +198,7 @@ private:
     std::vector<float> scratch;                      // canal droit fictif pour les effets en mono
     void runFx(size_t k, float* l, float* r, int n);
     void timerCallback() override;
-    float lastEq[3] { 99.f, 99.f, 99.f };
+    float lastEq[kEqs][3] {};
     double sr = 48000.0;
     static constexpr int kRing = 32768;
     float ring[kRing] {};

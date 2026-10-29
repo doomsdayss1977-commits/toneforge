@@ -11,3 +11,5 @@
 - Ampli B, étiquettes, looper + métronome, macro : ROADMAP AmpliTube 1-7 terminée (b3f083a → 0710793, revue 9e2b6b3).
 - Interface « studio néon » en 3 étapes + revue (a73ef7c, 17c608d, 419d03c, 1601e4e).
 - Piège : `renderBackground` imposait la couleur `ink` → valeur des molettes invisible ; `MouseEvent::eventType` n'existe pas → survol suivi par le timer.
+
+- 2026-10-28 : étape 1 moteur modulable (réserves NAM/IR/EQ/Gate/effets, route A|B, mélangeur, migration presets) testée par l'utilisateur : son identique, presets, A/B, pédales, attaque, sauvegarde OK. Commitée.
